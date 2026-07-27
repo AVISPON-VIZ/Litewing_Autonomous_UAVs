@@ -72,6 +72,7 @@ class LiteWingGUI:
 
         self.battery_var = tk.StringVar(value="Battery: --")
         self.mode_var = tk.StringVar(value="Mode: MANUAL")
+        self.cam_status_var = tk.StringVar(value="Camera: OFF")
         self.yaw_var = tk.StringVar(value="Vision Yaw: --")
         self.collision_var = tk.StringVar(value="Collision Prob: --")
         self.packets_var = tk.StringVar(value="Packets: 0")
@@ -79,6 +80,7 @@ class LiteWingGUI:
 
         ttk.Label(status_frame, textvariable=self.battery_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.mode_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.cam_status_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.yaw_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.collision_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.packets_var).pack(anchor=tk.W)
@@ -136,6 +138,18 @@ class LiteWingGUI:
         )
         ttk.Label(info_frame, text=info_text, justify=tk.LEFT).pack(anchor=tk.W)
 
+        # ----- Debug Output Frame -----
+        output_frame = ttk.LabelFrame(self.root, text="Debug / Telemetry Output", padding=10)
+        output_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        output_frame.columnconfigure(0, weight=1)
+        output_frame.rowconfigure(0, weight=1)
+
+        self.log_text = tk.Text(output_frame, height=10, wrap=tk.NONE, state=tk.DISABLED)
+        self.log_text.grid(row=0, column=0, sticky=tk.NSEW)
+        scrollbar = ttk.Scrollbar(output_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        self.log_text.config(yscrollcommand=scrollbar.set)
+
     # ============================================================
     # Connection
     # ============================================================
@@ -153,21 +167,10 @@ class LiteWingGUI:
         try:
             cflib.crtp.init_drivers()
             self.cf = Crazyflie(rw_cache="./cache")
+            self.cf.connected.add_callback(self._on_connected)
+            self.cf.connection_failed.add_callback(self._on_connection_failed)
+            self.cf.disconnected.add_callback(self._on_disconnected)
             self.cf.open_link(uri)
-            time.sleep(2)
-            if self.cf.is_connected():
-                self.connected = True
-                self.status_label.config(text="Status: Connected", foreground="green")
-                self.connect_btn.config(text="Disconnect")
-                self.arm_btn.config(state=tk.NORMAL)
-                self.disarm_btn.config(state=tk.NORMAL)
-                self.start_auto_btn.config(state=tk.NORMAL)
-                self.stop_auto_btn.config(state=tk.NORMAL)
-                self.emerg_btn.config(state=tk.NORMAL)
-                self._setup_log_block()
-            else:
-                self.status_label.config(text="Status: Connection failed", foreground="red")
-                messagebox.showerror("Error", f"Could not connect to {uri}")
         except Exception as e:
             self.status_label.config(text=f"Status: Error - {e}", foreground="red")
             messagebox.showerror("Error", f"Connection failed:\n{e}")
@@ -177,11 +180,16 @@ class LiteWingGUI:
             if self.log_config:
                 try:
                     self.log_config.stop()
-                except:
+                except Exception:
                     pass
-            self.cf.close_link()
+            try:
+                self.cf.close_link()
+            except Exception:
+                pass
+            self.cf = None
         self.connected = False
         self.status_label.config(text="Status: Disconnected", foreground="red")
+        self.cam_status_var.set("Camera: OFF")
         self.connect_btn.config(text="Connect")
         self.arm_btn.config(state=tk.DISABLED)
         self.disarm_btn.config(state=tk.DISABLED)
@@ -194,6 +202,13 @@ class LiteWingGUI:
     # ============================================================
     def _setup_log_block(self):
         try:
+            if self.log_config:
+                try:
+                    self.log_config.stop()
+                except Exception:
+                    pass
+                self.log_config = None
+
             self.log_config = LogConfig(name="AutonomousNav", period_in_ms=100)
             self.log_config.add_variable("autonomous.yaw", "float")
             self.log_config.add_variable("autonomous.collision", "float")
@@ -203,8 +218,10 @@ class LiteWingGUI:
             self.cf.log.add_config(self.log_config)
             self.log_config.data_received_cb.add_callback(self._log_data_received)
             self.log_config.start()
+            self._append_log("Log subscription started for autonomous telemetry")
         except Exception as e:
-            print(f"Log block subscription warning: {e}")
+            self._append_log(f"Log block subscription warning: {e}")
+            self.status_label.config(text="Status: Log subscription failed", foreground="red")
 
     def _log_data_received(self, timestamp, data, logconf):
         yaw = data.get("autonomous.yaw", 0.0)
@@ -213,12 +230,26 @@ class LiteWingGUI:
         avoided = data.get("autonomous.avoided", 0)
 
         self.root.after(0, lambda: self._update_ui_telemetry(yaw, coll, packets, avoided))
+        self.root.after(0, lambda: self._append_log(
+            f"Telemetry received: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
+        self.root.after(0, lambda: self.cam_status_var.set("Camera: ACTIVE"))
 
     def _update_ui_telemetry(self, yaw, coll, packets, avoided):
         self.yaw_var.set(f"Vision Yaw: {yaw:+.4f}")
         self.collision_var.set(f"Collision Prob: {coll:.4f} {'[OBSTACLE!]' if coll > 0.5 else '[CLEAR]'}")
         self.packets_var.set(f"Packets: {packets}")
         self.avoided_var.set(f"Obstacles Avoided: {avoided}")
+
+    def _append_log(self, message):
+        timestamp = time.strftime('%H:%M:%S')
+        log_line = f"[{timestamp}] {message}\n"
+        try:
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.insert(tk.END, log_line)
+            self.log_text.see(tk.END)
+            self.log_text.configure(state=tk.DISABLED)
+        except Exception:
+            print(log_line, end='')
 
     # ============================================================
     # Controls
@@ -265,6 +296,7 @@ class LiteWingGUI:
             self.autonomous_active = True
             self.auto_status_label.config(text="ON", foreground="green")
             self.mode_var.set("Mode: AUTONOMOUS (Dynamic Vision)")
+            self.cam_status_var.set("Camera: ACTIVE")
 
     def stop_autonomous(self):
         if not self.connected:
@@ -273,16 +305,42 @@ class LiteWingGUI:
             self.autonomous_active = False
             self.auto_status_label.config(text="OFF", foreground="gray")
             self.mode_var.set("Mode: MANUAL")
+            self.cam_status_var.set("Camera: OFF")
 
     def _set_param(self, name, value):
         if self.cf:
             try:
                 self.cf.param.set_value(name, value)
+                self._append_log(f"Parameter set: {name} = {value}")
                 return True
             except Exception as e:
+                self._append_log(f"Parameter write failed: {name} = {value} -> {e}")
                 messagebox.showerror("Parameter Write Failed", f"Could not set {name} to {value}:\n{e}")
                 return False
+        self._append_log(f"Parameter write skipped; no connection: {name}")
         return False
+
+    def _on_connected(self, link_uri):
+        self.connected = True
+        self.status_label.config(text="Status: Connected", foreground="green")
+        self.connect_btn.config(text="Disconnect")
+        self.arm_btn.config(state=tk.NORMAL)
+        self.disarm_btn.config(state=tk.NORMAL)
+        self.start_auto_btn.config(state=tk.NORMAL)
+        self.stop_auto_btn.config(state=tk.NORMAL)
+        self.emerg_btn.config(state=tk.NORMAL)
+        self._append_log(f"Connected to {link_uri}")
+        self._setup_log_block()
+
+    def _on_connection_failed(self, link_uri, message):
+        self.status_label.config(text="Status: Connection failed", foreground="red")
+        self._append_log(f"Connection failed: {link_uri} -> {message}")
+        messagebox.showerror("Error", f"Could not connect to {link_uri}:\n{message}")
+        self.cf = None
+
+    def _on_disconnected(self, link_uri):
+        self._append_log(f"Disconnected from {link_uri}")
+        self.disconnect()
 
 
 if __name__ == "__main__":
