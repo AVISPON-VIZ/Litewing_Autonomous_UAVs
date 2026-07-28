@@ -50,6 +50,7 @@ class LiteWingGUI:
         self.log_config = None
         self.connected = False
         self.autonomous_active = False
+        self.last_telemetry_seen = None
 
         self._build_ui()
 
@@ -72,6 +73,7 @@ class LiteWingGUI:
 
         self.battery_var = tk.StringVar(value="Battery: --")
         self.mode_var = tk.StringVar(value="Mode: MANUAL")
+        self.firmware_var = tk.StringVar(value="Firmware: CHECKING")
         self.cam_status_var = tk.StringVar(value="Camera: OFF")
         self.yaw_var = tk.StringVar(value="Vision Yaw: --")
         self.collision_var = tk.StringVar(value="Collision Prob: --")
@@ -80,6 +82,7 @@ class LiteWingGUI:
 
         ttk.Label(status_frame, textvariable=self.battery_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.mode_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.firmware_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.cam_status_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.yaw_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.collision_var).pack(anchor=tk.W)
@@ -188,7 +191,10 @@ class LiteWingGUI:
                 pass
             self.cf = None
         self.connected = False
+        self.autonomous_active = False
+        self.last_telemetry_seen = None
         self.status_label.config(text="Status: Disconnected", foreground="red")
+        self.firmware_var.set("Firmware: CHECKING")
         self.cam_status_var.set("Camera: OFF")
         self.connect_btn.config(text="Connect")
         self.arm_btn.config(state=tk.DISABLED)
@@ -219,6 +225,7 @@ class LiteWingGUI:
             self.log_config.data_received_cb.add_callback(self._log_data_received)
             self.log_config.start()
             self._append_log("Log subscription started for autonomous telemetry")
+            self.root.after(2500, self._check_camera_state)
         except Exception as e:
             self._append_log(f"Log block subscription warning: {e}")
             self.status_label.config(text="Status: Log subscription failed", foreground="red")
@@ -228,17 +235,35 @@ class LiteWingGUI:
         coll = data.get("autonomous.collision", 0.0)
         packets = data.get("autonomous.packets", 0)
         avoided = data.get("autonomous.avoided", 0)
+        has_payload = any(key in data for key in ("autonomous.yaw", "autonomous.collision", "autonomous.packets", "autonomous.avoided"))
 
         self.root.after(0, lambda: self._update_ui_telemetry(yaw, coll, packets, avoided))
         self.root.after(0, lambda: self._append_log(
             f"Telemetry received: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
-        self.root.after(0, lambda: self.cam_status_var.set("Camera: ACTIVE"))
+        self.root.after(0, lambda: self._mark_camera_state("ACTIVE" if has_payload else "WAITING"))
+        self.last_telemetry_seen = time.time()
 
     def _update_ui_telemetry(self, yaw, coll, packets, avoided):
         self.yaw_var.set(f"Vision Yaw: {yaw:+.4f}")
         self.collision_var.set(f"Collision Prob: {coll:.4f} {'[OBSTACLE!]' if coll > 0.5 else '[CLEAR]'}")
         self.packets_var.set(f"Packets: {packets}")
         self.avoided_var.set(f"Obstacles Avoided: {avoided}")
+
+    def _mark_camera_state(self, state):
+        self.cam_status_var.set(f"Camera: {state}")
+
+    def _check_camera_state(self):
+        if not self.connected:
+            return
+        if not self.autonomous_active:
+            self._mark_camera_state("OFF")
+            return
+        if self.last_telemetry_seen is None:
+            self._mark_camera_state("WAITING")
+            self._append_log("No autonomous telemetry received yet; verify the XIAO/LiteWing firmware is running the custom log block")
+        elif time.time() - self.last_telemetry_seen > 2.5:
+            self._mark_camera_state("NO DATA")
+            self._append_log("Autonomous telemetry timed out; the firmware may not be streaming the expected log variables")
 
     def _append_log(self, message):
         timestamp = time.strftime('%H:%M:%S')
@@ -296,7 +321,9 @@ class LiteWingGUI:
             self.autonomous_active = True
             self.auto_status_label.config(text="ON", foreground="green")
             self.mode_var.set("Mode: AUTONOMOUS (Dynamic Vision)")
-            self.cam_status_var.set("Camera: ACTIVE")
+            self.last_telemetry_seen = None
+            self._mark_camera_state("STARTING")
+            self.root.after(2500, self._check_camera_state)
 
     def stop_autonomous(self):
         if not self.connected:
@@ -305,7 +332,7 @@ class LiteWingGUI:
             self.autonomous_active = False
             self.auto_status_label.config(text="OFF", foreground="gray")
             self.mode_var.set("Mode: MANUAL")
-            self.cam_status_var.set("Camera: OFF")
+            self._mark_camera_state("OFF")
 
     def _set_param(self, name, value):
         if self.cf:
@@ -330,6 +357,7 @@ class LiteWingGUI:
         self.stop_auto_btn.config(state=tk.NORMAL)
         self.emerg_btn.config(state=tk.NORMAL)
         self._append_log(f"Connected to {link_uri}")
+        self._probe_autonomous_support()
         self._setup_log_block()
 
     def _on_connection_failed(self, link_uri, message):
@@ -341,6 +369,18 @@ class LiteWingGUI:
     def _on_disconnected(self, link_uri):
         self._append_log(f"Disconnected from {link_uri}")
         self.disconnect()
+
+    def _probe_autonomous_support(self):
+        if not self.cf:
+            return
+        try:
+            value = self.cf.param.get_value("autonomous.enabled")
+            self.firmware_var.set("Firmware: OK")
+            self._append_log(f"Autonomous parameter detected: autonomous.enabled={value}")
+        except Exception as e:
+            self.firmware_var.set("Firmware: MISSING")
+            self._mark_camera_state("NOT SUPPORTED")
+            self._append_log(f"Autonomous firmware probe failed: {e}")
 
 
 if __name__ == "__main__":
