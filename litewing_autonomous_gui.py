@@ -357,7 +357,7 @@ class LiteWingGUI:
         self.stop_auto_btn.config(state=tk.NORMAL)
         self.emerg_btn.config(state=tk.NORMAL)
         self._append_log(f"Connected to {link_uri}")
-        self._probe_autonomous_support()
+        threading.Thread(target=self._probe_autonomous_support, daemon=True).start()
         self._setup_log_block()
 
     def _on_connection_failed(self, link_uri, message):
