@@ -51,6 +51,7 @@ class LiteWingGUI:
         self.connected = False
         self.autonomous_active = False
         self.last_telemetry_seen = None
+        self.last_packet_count = 0
 
         self._build_ui()
 
@@ -75,6 +76,7 @@ class LiteWingGUI:
         self.mode_var = tk.StringVar(value="Mode: MANUAL")
         self.firmware_var = tk.StringVar(value="Firmware: CHECKING")
         self.cam_status_var = tk.StringVar(value="Camera: OFF")
+        self.vision_status_var = tk.StringVar(value="Vision: OFF")
         self.yaw_var = tk.StringVar(value="Vision Yaw: --")
         self.collision_var = tk.StringVar(value="Collision Prob: --")
         self.packets_var = tk.StringVar(value="Packets: 0")
@@ -84,6 +86,7 @@ class LiteWingGUI:
         ttk.Label(status_frame, textvariable=self.mode_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.firmware_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.cam_status_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.vision_status_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.yaw_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.collision_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.packets_var).pack(anchor=tk.W)
@@ -248,33 +251,47 @@ class LiteWingGUI:
         avoided = data.get("autonomous.avoided", 0)
         has_payload = any(key in data for key in ("autonomous.yaw", "autonomous.collision", "autonomous.packets", "autonomous.avoided"))
 
+        self.last_packet_count = packets
+        self.last_telemetry_seen = time.time()
+
         self.root.after(0, lambda: self._update_ui_telemetry(yaw, coll, packets, avoided))
         self.root.after(0, lambda: self._append_log(
             f"Telemetry received: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
+        self.root.after(0, lambda: self._mark_vision_status("ACTIVE" if packets > 0 else "NO PACKETS"))
         self.root.after(0, lambda: self._mark_camera_state("ACTIVE" if has_payload else "WAITING"))
-        self.last_telemetry_seen = time.time()
 
     def _update_ui_telemetry(self, yaw, coll, packets, avoided):
         self.yaw_var.set(f"Vision Yaw: {yaw:+.4f}")
         self.collision_var.set(f"Collision Prob: {coll:.4f} {'[OBSTACLE!]' if coll > 0.5 else '[CLEAR]'}")
         self.packets_var.set(f"Packets: {packets}")
         self.avoided_var.set(f"Obstacles Avoided: {avoided}")
+        self.vision_status_var.set("Vision: ACTIVE" if packets > 0 else "Vision: NO PACKETS")
 
     def _mark_camera_state(self, state):
         self.cam_status_var.set(f"Camera: {state}")
+
+    def _mark_vision_status(self, state):
+        self.vision_status_var.set(f"Vision: {state}")
 
     def _check_camera_state(self):
         if not self.connected:
             return
         if not self.autonomous_active:
             self._mark_camera_state("OFF")
+            self.vision_status_var.set("Vision: OFF")
             return
         if self.last_telemetry_seen is None:
             self._mark_camera_state("WAITING")
+            self.vision_status_var.set("Vision: WAITING")
             self._append_log("No autonomous telemetry received yet; verify the XIAO/LiteWing firmware is running the custom log block")
         elif time.time() - self.last_telemetry_seen > 2.5:
             self._mark_camera_state("NO DATA")
+            self._mark_vision_status("NO DATA")
             self._append_log("Autonomous telemetry timed out; the firmware may not be streaming the expected log variables")
+        elif self.last_packet_count == 0:
+            self._mark_camera_state("NO PACKETS")
+            self._mark_vision_status("NO PACKETS")
+            self._append_log("Vision log subscription active, but packet count remains 0. Check XIAO firmware and START command reception.")
         self.root.after(2500, self._check_camera_state)
 
     def _append_log(self, message):
