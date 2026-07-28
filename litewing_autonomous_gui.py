@@ -264,6 +264,7 @@ class LiteWingGUI:
         elif time.time() - self.last_telemetry_seen > 2.5:
             self._mark_camera_state("NO DATA")
             self._append_log("Autonomous telemetry timed out; the firmware may not be streaming the expected log variables")
+        self.root.after(2500, self._check_camera_state)
 
     def _append_log(self, message):
         timestamp = time.strftime('%H:%M:%S')
@@ -324,6 +325,7 @@ class LiteWingGUI:
             self.last_telemetry_seen = None
             self._mark_camera_state("STARTING")
             self.root.after(2500, self._check_camera_state)
+            threading.Thread(target=self._verify_autonomous_param, daemon=True).start()
 
     def stop_autonomous(self):
         if not self.connected:
@@ -375,12 +377,27 @@ class LiteWingGUI:
             return
         try:
             value = self.cf.param.get_value("autonomous.enabled")
-            self.firmware_var.set("Firmware: OK")
-            self._append_log(f"Autonomous parameter detected: autonomous.enabled={value}")
+            self.root.after(0, lambda: self._set_firmware_ok(value))
         except Exception as e:
-            self.firmware_var.set("Firmware: MISSING")
-            self._mark_camera_state("NOT SUPPORTED")
-            self._append_log(f"Autonomous firmware probe failed: {e}")
+            self.root.after(0, lambda: self._set_firmware_missing(e))
+
+    def _verify_autonomous_param(self):
+        if not self.cf:
+            return
+        try:
+            value = self.cf.param.get_value("autonomous.enabled")
+            self.root.after(0, lambda: self._append_log(f"Verified autonomous.enabled = {value}"))
+        except Exception as e:
+            self.root.after(0, lambda: self._append_log(f"Verification failed: autonomous.enabled read-back failed: {e}"))
+
+    def _set_firmware_ok(self, value):
+        self.firmware_var.set("Firmware: OK")
+        self._append_log(f"Autonomous parameter detected: autonomous.enabled={value}")
+
+    def _set_firmware_missing(self, error):
+        self.firmware_var.set("Firmware: MISSING")
+        self._mark_camera_state("NOT SUPPORTED")
+        self._append_log(f"Autonomous firmware probe failed: {error}")
 
 
 if __name__ == "__main__":
