@@ -149,9 +149,17 @@ class LiteWingGUI:
 
         self.log_text = tk.Text(output_frame, height=10, wrap=tk.NONE, state=tk.DISABLED)
         self.log_text.grid(row=0, column=0, sticky=tk.NSEW)
-        scrollbar = ttk.Scrollbar(output_frame, orient=tk.VERTICAL, command=self.log_text.yview)
-        scrollbar.grid(row=0, column=1, sticky=tk.NS)
-        self.log_text.config(yscrollcommand=scrollbar.set)
+        vscrollbar = ttk.Scrollbar(output_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        vscrollbar.grid(row=0, column=1, sticky=tk.NS)
+        hscrollbar = ttk.Scrollbar(output_frame, orient=tk.HORIZONTAL, command=self.log_text.xview)
+        hscrollbar.grid(row=1, column=0, sticky=tk.EW)
+        self.log_text.config(yscrollcommand=vscrollbar.set, xscrollcommand=hscrollbar.set)
+
+        debug_controls = ttk.Frame(output_frame)
+        debug_controls.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(5,0))
+        ttk.Button(debug_controls, text="Clear Debug", command=self._clear_debug).pack(side=tk.LEFT)
+        self.debug_status = tk.StringVar(value="Debug ready")
+        ttk.Label(debug_controls, textvariable=self.debug_status).pack(side=tk.LEFT, padx=(10,0))
 
     # ============================================================
     # Connection
@@ -174,6 +182,8 @@ class LiteWingGUI:
             self.cf.connection_failed.add_callback(self._on_connection_failed)
             self.cf.disconnected.add_callback(self._on_disconnected)
             self.cf.open_link(uri)
+            self.cam_status_var.set("Camera: OFF")
+            self.debug_status.set("Connecting...")
         except Exception as e:
             self.status_label.config(text=f"Status: Error - {e}", foreground="red")
             messagebox.showerror("Error", f"Connection failed:\n{e}")
@@ -196,6 +206,7 @@ class LiteWingGUI:
         self.status_label.config(text="Status: Disconnected", foreground="red")
         self.firmware_var.set("Firmware: CHECKING")
         self.cam_status_var.set("Camera: OFF")
+        self.debug_status.set("Debug ready")
         self.connect_btn.config(text="Connect")
         self.arm_btn.config(state=tk.DISABLED)
         self.disarm_btn.config(state=tk.DISABLED)
@@ -274,8 +285,18 @@ class LiteWingGUI:
             self.log_text.insert(tk.END, log_line)
             self.log_text.see(tk.END)
             self.log_text.configure(state=tk.DISABLED)
+            self.debug_status.set(f"Last debug: {time.strftime('%H:%M:%S')}")
         except Exception:
             print(log_line, end='')
+
+    def _clear_debug(self):
+        try:
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.delete('1.0', tk.END)
+            self.log_text.configure(state=tk.DISABLED)
+            self.debug_status.set("Debug cleared")
+        except Exception:
+            pass
 
     # ============================================================
     # Controls
