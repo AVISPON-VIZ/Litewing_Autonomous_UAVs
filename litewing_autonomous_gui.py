@@ -27,6 +27,7 @@ from tkinter import ttk, messagebox
 import threading
 import time
 import sys
+from cflib.crtp.crtpstack import CRTPPacket
 
 try:
     import cflib.crtp
@@ -47,11 +48,14 @@ class LiteWingGUI:
         self.root.geometry("580x620")
 
         self.cf = None
-        self.log_config = None
+        self.log_configs = []
         self.connected = False
         self.autonomous_active = False
+        self.autonomous_param_supported = False
         self.last_telemetry_seen = None
         self.last_packet_count = 0
+        self.last_yaw = None
+        self.last_collision = None
 
         self._build_ui()
 
@@ -81,6 +85,10 @@ class LiteWingGUI:
         self.collision_var = tk.StringVar(value="Collision Prob: --")
         self.packets_var = tk.StringVar(value="Packets: 0")
         self.avoided_var = tk.StringVar(value="Obstacles Avoided: 0")
+        self.litewing_steer_var = tk.StringVar(value="LiteWing Steering: --")
+        self.litewing_fwd_vel_var = tk.StringVar(value="LiteWing Forward Vel: --")
+        self.litewing_ang_vel_var = tk.StringVar(value="LiteWing Ang Vel: --")
+        self.log_status_var = tk.StringVar(value="Log Status: Discovering...")
 
         ttk.Label(status_frame, textvariable=self.battery_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.mode_var).pack(anchor=tk.W)
@@ -91,6 +99,10 @@ class LiteWingGUI:
         ttk.Label(status_frame, textvariable=self.collision_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.packets_var).pack(anchor=tk.W)
         ttk.Label(status_frame, textvariable=self.avoided_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.litewing_steer_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.litewing_fwd_vel_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.litewing_ang_vel_var).pack(anchor=tk.W)
+        ttk.Label(status_frame, textvariable=self.log_status_var).pack(anchor=tk.W)
 
         # ----- Manual Control Frame -----
         manual_frame = ttk.LabelFrame(self.root, text="Manual Control", padding=10)
@@ -193,11 +205,12 @@ class LiteWingGUI:
 
     def disconnect(self):
         if self.cf:
-            if self.log_config:
+            for config in self.log_configs:
                 try:
-                    self.log_config.stop()
+                    config.stop()
                 except Exception:
                     pass
+            self.log_configs = []
             try:
                 self.cf.close_link()
             except Exception:
@@ -222,29 +235,104 @@ class LiteWingGUI:
     # ============================================================
     def _setup_log_block(self):
         try:
-            if self.log_config:
+            # IMPORTANT: Reset log blocks on the drone to avoid hitting MAX_BLOCKS limits
+            # from previous disconnected sessions.
+            if hasattr(self.cf.log, 'reset'):
+                self.cf.log.reset()
+
+            for config in self.log_configs:
                 try:
-                    self.log_config.stop()
+                    config.stop()
                 except Exception:
                     pass
-                self.log_config = None
+            self.log_configs = []
 
-            self.log_config = LogConfig(name="AutonomousNav", period_in_ms=100)
-            self.log_config.add_variable("autonomous.yaw", "float")
-            self.log_config.add_variable("autonomous.collision", "float")
-            self.log_config.add_variable("autonomous.packets", "uint32_t")
-            self.log_config.add_variable("autonomous.avoided", "uint32_t")
+            groups = self._discover_log_groups()
+            self._append_log(f"Available log groups: {', '.join(sorted(groups.keys()))}")
 
-            self.cf.log.add_config(self.log_config)
-            self.log_config.data_received_cb.add_callback(self._log_data_received)
-            self.log_config.start()
-            self._append_log("Log subscription started for autonomous telemetry")
+            if 'autonomous' in groups:
+                self._create_log_config(
+                    "AutonomousVision",
+                    [
+                        ("autonomous.yaw", "float"),
+                        ("autonomous.collision", "float"),
+                        ("autonomous.packets", "uint32_t"),
+                        ("autonomous.avoided", "uint32_t"),
+                    ]
+                )
+            else:
+                self._append_log("Warning: 'autonomous' log group not available on this firmware.")
+
+            if 'DRONET_LOG' in groups:
+                self._create_log_config(
+                    "LiteWingDRONET",
+                    [
+                        ("DRONET_LOG.steering", "float"),
+                        ("DRONET_LOG.collision", "float"),
+                        ("DRONET_LOG.fwd_vel", "float"),
+                        ("DRONET_LOG.ang_vel", "float"),
+                    ]
+                )
+            elif 'UART_LOG_GAP8' in groups:
+                self._create_log_config(
+                    "LiteWingUART",
+                    [
+                        ("UART_LOG_GAP8.gap8_steer", "float"),
+                        ("UART_LOG_GAP8.gap8_coll", "float"),
+                    ]
+                )
+            else:
+                self._append_log("No LiteWing-specific log groups found for additional analysis.")
+
+            active_logs = [config.name for config in self.log_configs]
+            if active_logs:
+                self.log_status_var.set(f"Log Status: {', '.join(active_logs)}")
+                self._append_log(f"Started log configs: {', '.join(active_logs)}")
+            else:
+                self.log_status_var.set("Log Status: NONE")
+
             self.root.after(2500, self._check_camera_state)
         except Exception as e:
-            self._append_log(f"Log block subscription warning: {e}")
+            err_msg = f"Log subscription failed: {e}\nVerify the LiteWing firmware has the expected log groups!"
+            self._append_log(err_msg)
             self.status_label.config(text="Status: Log subscription failed", foreground="red")
+            messagebox.showerror("Firmware Mismatch", err_msg)
+            if hasattr(self, 'cf') and self.cf and self.cf.log and self.cf.log.toc:
+                groups = set([var.group for var in self.cf.log.toc.toc.values()])
+                self._append_log(f"Available log groups on drone: {', '.join(sorted(groups))}")
+
+    def _discover_log_groups(self):
+        groups = {}
+        try:
+            if self.cf and self.cf.log and self.cf.log.toc:
+                for var in self.cf.log.toc.toc.values():
+                    groups.setdefault(var.group, []).append(var.name)
+        except Exception:
+            pass
+        return groups
+
+    def _create_log_config(self, name, variables):
+        log_config = LogConfig(name=name, period_in_ms=100)
+        for var_name, var_type in variables:
+            log_config.add_variable(var_name, var_type)
+        self.cf.log.add_config(log_config)
+        log_config.data_received_cb.add_callback(self._log_data_received)
+        log_config.start()
+        self.log_configs.append(log_config)
+        return log_config
 
     def _log_data_received(self, timestamp, data, logconf):
+        print(f"[DEBUG] _log_data_received CALLED! logconf={logconf.name} data: {data}")
+        if logconf.name == "AutonomousVision":
+            self._handle_xiao_telemetry(data)
+        elif logconf.name == "LiteWingDRONET":
+            self._handle_litewing_dronet(data)
+        elif logconf.name == "LiteWingUART":
+            self._handle_litewing_uart(data)
+        else:
+            self._append_log(f"Unknown log source '{logconf.name}' received: {data}")
+
+    def _handle_xiao_telemetry(self, data):
         yaw = data.get("autonomous.yaw", 0.0)
         coll = data.get("autonomous.collision", 0.0)
         packets = data.get("autonomous.packets", 0)
@@ -253,12 +341,36 @@ class LiteWingGUI:
 
         self.last_packet_count = packets
         self.last_telemetry_seen = time.time()
+        self.last_yaw = yaw
+        self.last_collision = coll
 
-        self.root.after(0, lambda: self._update_ui_telemetry(yaw, coll, packets, avoided))
+        self.root.after(0, lambda y=yaw, c=coll, p=packets, a=avoided: self._update_ui_telemetry(y, c, p, a))
+        self.root.after(0, lambda y=yaw, c=coll: self._validate_telemetry_values(y, c))
+        self.root.after(0, lambda p=packets: self._mark_vision_status("ACTIVE" if p > 0 else "NO PACKETS"))
+        self.root.after(0, lambda hp=has_payload: self._mark_camera_state("ACTIVE" if hp else "WAITING"))
         self.root.after(0, lambda: self._append_log(
-            f"Telemetry received: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
-        self.root.after(0, lambda: self._mark_vision_status("ACTIVE" if packets > 0 else "NO PACKETS"))
-        self.root.after(0, lambda: self._mark_camera_state("ACTIVE" if has_payload else "WAITING"))
+            f"XIAO telemetry: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
+
+    def _handle_litewing_dronet(self, data):
+        steering = data.get("DRONET_LOG.steering", data.get("steering", 0.0))
+        collision = data.get("DRONET_LOG.collision", data.get("collision", 0.0))
+        fwd_vel = data.get("DRONET_LOG.fwd_vel", data.get("fwd_vel", 0.0))
+        ang_vel = data.get("DRONET_LOG.ang_vel", data.get("ang_vel", 0.0))
+
+        self.root.after(0, lambda s=steering, f=fwd_vel, a=ang_vel: self._update_litewing_ui_telemetry(s, f, a))
+        self.root.after(0, lambda: self._append_log(
+            f"LiteWing DRoNet: steer={steering:.4f}, coll={collision:.4f}, fwd_vel={fwd_vel:.4f}, ang_vel={ang_vel:.4f}"))
+
+    def _handle_litewing_uart(self, data):
+        steer = data.get("UART_LOG_GAP8.gap8_steer", data.get("gap8_steer", 0.0))
+        coll = data.get("UART_LOG_GAP8.gap8_coll", data.get("gap8_coll", 0.0))
+        self.root.after(0, lambda: self._append_log(
+            f"LiteWing UART values: steer={steer:.4f}, coll={coll:.4f}"))
+
+    def _update_litewing_ui_telemetry(self, steering, forward_velocity, angular_velocity):
+        self.litewing_steer_var.set(f"LiteWing Steering: {steering:+.4f}")
+        self.litewing_fwd_vel_var.set(f"LiteWing Forward Vel: {forward_velocity:.4f}")
+        self.litewing_ang_vel_var.set(f"LiteWing Ang Vel: {angular_velocity:.4f}")
 
     def _update_ui_telemetry(self, yaw, coll, packets, avoided):
         self.yaw_var.set(f"Vision Yaw: {yaw:+.4f}")
@@ -273,6 +385,12 @@ class LiteWingGUI:
     def _mark_vision_status(self, state):
         self.vision_status_var.set(f"Vision: {state}")
 
+    def _validate_telemetry_values(self, yaw, collision):
+        if yaw < -1.25 or yaw > 1.25:
+            self._append_log(f"WARNING: Yaw out of expected range: {yaw:.4f}. Check steering sign / normalization.")
+        if collision < -0.05 or collision > 1.05:
+            self._append_log(f"WARNING: Collision probability out of expected range: {collision:.4f}. Check sigmoid scaling.")
+
     def _check_camera_state(self):
         if not self.connected:
             return
@@ -281,17 +399,25 @@ class LiteWingGUI:
             self.vision_status_var.set("Vision: OFF")
             return
         if self.last_telemetry_seen is None:
+            print("[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.")
             self._mark_camera_state("WAITING")
             self.vision_status_var.set("Vision: WAITING")
             self._append_log("No autonomous telemetry received yet; verify the XIAO/LiteWing firmware is running the custom log block")
         elif time.time() - self.last_telemetry_seen > 2.5:
+            print("[DEBUG] _check_camera_state: telemetry timed out! Setting NO DATA.")
             self._mark_camera_state("NO DATA")
             self._mark_vision_status("NO DATA")
             self._append_log("Autonomous telemetry timed out; the firmware may not be streaming the expected log variables")
         elif self.last_packet_count == 0:
+            print("[DEBUG] _check_camera_state: last_packet_count is 0! Setting NO PACKETS.")
             self._mark_camera_state("NO PACKETS")
             self._mark_vision_status("NO PACKETS")
             self._append_log("Vision log subscription active, but packet count remains 0. Check XIAO firmware and START command reception.")
+        elif self.last_yaw is not None and self.last_collision is not None:
+            if not (-1.5 <= self.last_yaw <= 1.5) or not (0.0 <= self.last_collision <= 1.2):
+                self._append_log(
+                    f"Telemetry out of range: yaw={self.last_yaw:.3f}, collision={self.last_collision:.3f}. "
+                    "Verify XIAO packet decoding and payload scaling.")
         self.root.after(2500, self._check_camera_state)
 
     def _append_log(self, message):
@@ -356,6 +482,12 @@ class LiteWingGUI:
     def start_autonomous(self):
         if not self.connected:
             return
+        if not self.autonomous_param_supported:
+            messagebox.showerror(
+                "Unsupported Firmware",
+                "This Crazyflie firmware does not expose the required autonomous.enabled parameter. "
+                "Please update the firmware and try again.")
+            return
         if self._set_param("autonomous.enabled", 1):
             self.autonomous_active = True
             self.auto_status_label.config(text="ON", foreground="green")
@@ -387,6 +519,16 @@ class LiteWingGUI:
         self._append_log(f"Parameter write skipped; no connection: {name}")
         return False
 
+    def _keep_alive_loop(self):
+        while self.connected and self.cf:
+            try:
+                # Harmless ping to keep the ESP32 WiFi watchdog alive
+                # even if the drone's CRTP txQueue is starved.
+                self.cf.param.request_param_update("autonomous.enabled")
+            except Exception:
+                pass
+            time.sleep(0.2)
+
     def _on_connected(self, link_uri):
         self.connected = True
         self.status_label.config(text="Status: Connected", foreground="green")
@@ -398,6 +540,7 @@ class LiteWingGUI:
         self.emerg_btn.config(state=tk.NORMAL)
         self._append_log(f"Connected to {link_uri}")
         threading.Thread(target=self._probe_autonomous_support, daemon=True).start()
+        threading.Thread(target=self._keep_alive_loop, daemon=True).start()
         self._setup_log_block()
 
     def _on_connection_failed(self, link_uri, message):
@@ -415,8 +558,10 @@ class LiteWingGUI:
             return
         try:
             value = self.cf.param.get_value("autonomous.enabled")
+            self.autonomous_param_supported = True
             self.root.after(0, lambda: self._set_firmware_ok(value))
         except Exception as e:
+            self.autonomous_param_supported = False
             self.root.after(0, lambda: self._set_firmware_missing(e))
 
     def _verify_autonomous_param(self):
@@ -424,16 +569,23 @@ class LiteWingGUI:
             return
         try:
             value = self.cf.param.get_value("autonomous.enabled")
+            if not self.autonomous_active and value == 1:
+                self.root.after(0, lambda: self._append_log(
+                    "Warning: autonomous.enabled is 1 but autonomous mode is not active on the GUI."))
             self.root.after(0, lambda: self._append_log(f"Verified autonomous.enabled = {value}"))
         except Exception as e:
             self.root.after(0, lambda: self._append_log(f"Verification failed: autonomous.enabled read-back failed: {e}"))
 
     def _set_firmware_ok(self, value):
         self.firmware_var.set("Firmware: OK")
+        self.autonomous_param_supported = True
         self._append_log(f"Autonomous parameter detected: autonomous.enabled={value}")
 
     def _set_firmware_missing(self, error):
         self.firmware_var.set("Firmware: MISSING")
+        self.autonomous_param_supported = False
+        self.start_auto_btn.config(state=tk.DISABLED)
+        self.stop_auto_btn.config(state=tk.DISABLED)
         self._mark_camera_state("NOT SUPPORTED")
         self._append_log(f"Autonomous firmware probe failed: {error}")
 
