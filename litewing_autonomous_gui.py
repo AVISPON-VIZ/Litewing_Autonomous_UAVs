@@ -4,22 +4,6 @@ litewing_autonomous_gui.py
 A simple GUI for controlling the LiteWing drone with the ESP32-CAM vision module.
 
 The drone navigates FULLY AUTONOMOUSLY using dynamic continuous control.
-It explores any indoor environment by:
-  1. Flying forward with continuous speed scaling
-  2. Steering toward open space with dynamic yaw rate modulation
-  3. Continuous smooth deceleration as obstacles approach
-  4. Rotating in place when completely blocked (to find open direction)
-
-GUI buttons:
-  - Connect / Disconnect
-  - Arm (start motors)
-  - Disarm (stop motors)
-  - Start Autonomous (enable vision-based navigation)
-  - Stop Autonomous (return to manual control)
-  - Emergency Stop (cut motors immediately with 0ms delay)
-
-Requirements:
-  pip install cflib
 """
 
 import tkinter as tk
@@ -236,7 +220,6 @@ class LiteWingGUI:
     def _setup_log_block(self):
         try:
             # IMPORTANT: Reset log blocks on the drone to avoid hitting MAX_BLOCKS limits
-            # from previous disconnected sessions.
             if hasattr(self.cf.log, 'reset'):
                 self.cf.log.reset()
 
@@ -305,7 +288,11 @@ class LiteWingGUI:
         try:
             if self.cf and self.cf.log and self.cf.log.toc:
                 for var in self.cf.log.toc.toc.values():
-                    groups.setdefault(var.group, []).append((var.name, var.ctype))
+                    # Safely handle both older dictionary cflib versions and newer object versions
+                    group_name = var.get('group') if isinstance(var, dict) else var.group
+                    name = var.get('name') if isinstance(var, dict) else var.name
+                    ctype = var.get('ctype') if isinstance(var, dict) else getattr(var, 'ctype', 'float')
+                    groups.setdefault(group_name, []).append((name, ctype))
         except Exception as e:
             print(f"Exception in _discover_log_groups: {e}")
         return groups
@@ -359,8 +346,6 @@ class LiteWingGUI:
         yaw_rate = data.get("ctrltarget.yaw", 0.0)
 
         self.root.after(0, lambda y=yaw_rate, fx=vx, fy=vy: self._update_litewing_ui_telemetry(y, fx, fy))
-        # Rate limit logging the control targets so we don't spam the debug output too fast
-        # (It streams at 10Hz, let's just log it occasionally or not at all to keep UI clean)
 
     def _update_litewing_ui_telemetry(self, yaw_rate, vx, vy):
         self.litewing_steer_var.set(f"Target Yaw Rate: {yaw_rate:+.2f} deg/s")
@@ -517,8 +502,6 @@ class LiteWingGUI:
     def _keep_alive_loop(self):
         while self.connected and self.cf:
             try:
-                # Harmless ping to keep the ESP32 WiFi watchdog alive
-                # even if the drone's CRTP txQueue is starved.
                 self.cf.param.request_param_update("autonomous.enabled")
             except Exception:
                 pass
@@ -589,3 +572,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = LiteWingGUI(root)
     root.mainloop()
+
