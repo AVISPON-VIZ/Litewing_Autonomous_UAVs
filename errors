@@ -1,0 +1,8 @@
+C:\Users\manoj>C:/Users/manoj/AppData/Local/Programs/Python/Python313/python.exe c:/Users/manoj/Downloads/litewing_autonomous_gui.py
+Exception in _discover_log_groups: 'dict' object has no attribute 'group'
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
+[DEBUG] _check_camera_state: last_telemetry_seen is None! Setting WAITING.
