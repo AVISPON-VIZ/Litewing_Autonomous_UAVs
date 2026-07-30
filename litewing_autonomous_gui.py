@@ -85,9 +85,9 @@ class LiteWingGUI:
         self.collision_var = tk.StringVar(value="Collision Prob: --")
         self.packets_var = tk.StringVar(value="Packets: 0")
         self.avoided_var = tk.StringVar(value="Obstacles Avoided: 0")
-        self.litewing_steer_var = tk.StringVar(value="LiteWing Steering: --")
-        self.litewing_fwd_vel_var = tk.StringVar(value="LiteWing Forward Vel: --")
-        self.litewing_ang_vel_var = tk.StringVar(value="LiteWing Ang Vel: --")
+        self.litewing_steer_var = tk.StringVar(value="Target Yaw Rate: --")
+        self.litewing_fwd_vel_var = tk.StringVar(value="Target Fwd Vel (vx): --")
+        self.litewing_ang_vel_var = tk.StringVar(value="Target Lat Vel (vy): --")
         self.log_status_var = tk.StringVar(value="Log Status: Discovering...")
 
         ttk.Label(status_frame, textvariable=self.battery_var).pack(anchor=tk.W)
@@ -263,26 +263,17 @@ class LiteWingGUI:
             else:
                 self._append_log("Warning: 'autonomous' log group not available on this firmware.")
 
-            if 'DRONET_LOG' in groups:
+            if 'ctrltarget' in groups:
                 self._create_log_config(
-                    "LiteWingDRONET",
+                    "LiteWingControlTarget",
                     [
-                        ("DRONET_LOG.steering", "float"),
-                        ("DRONET_LOG.collision", "float"),
-                        ("DRONET_LOG.fwd_vel", "float"),
-                        ("DRONET_LOG.ang_vel", "float"),
-                    ]
-                )
-            elif 'UART_LOG_GAP8' in groups:
-                self._create_log_config(
-                    "LiteWingUART",
-                    [
-                        ("UART_LOG_GAP8.gap8_steer", "float"),
-                        ("UART_LOG_GAP8.gap8_coll", "float"),
+                        ("ctrltarget.vx", "float"),
+                        ("ctrltarget.vy", "float"),
+                        ("ctrltarget.yaw", "float"),
                     ]
                 )
             else:
-                self._append_log("No LiteWing-specific log groups found for additional analysis.")
+                self._append_log("No 'ctrltarget' group found. (Is this Crazyflie firmware?)")
 
             active_logs = [config.name for config in self.log_configs]
             if active_logs:
@@ -325,10 +316,8 @@ class LiteWingGUI:
         print(f"[DEBUG] _log_data_received CALLED! logconf={logconf.name} data: {data}")
         if logconf.name == "AutonomousVision":
             self._handle_xiao_telemetry(data)
-        elif logconf.name == "LiteWingDRONET":
-            self._handle_litewing_dronet(data)
-        elif logconf.name == "LiteWingUART":
-            self._handle_litewing_uart(data)
+        elif logconf.name == "LiteWingControlTarget":
+            self._handle_litewing_control(data)
         else:
             self._append_log(f"Unknown log source '{logconf.name}' received: {data}")
 
@@ -351,26 +340,19 @@ class LiteWingGUI:
         self.root.after(0, lambda: self._append_log(
             f"XIAO telemetry: yaw={yaw:.4f}, collision={coll:.4f}, packets={packets}, avoided={avoided}"))
 
-    def _handle_litewing_dronet(self, data):
-        steering = data.get("DRONET_LOG.steering", data.get("steering", 0.0))
-        collision = data.get("DRONET_LOG.collision", data.get("collision", 0.0))
-        fwd_vel = data.get("DRONET_LOG.fwd_vel", data.get("fwd_vel", 0.0))
-        ang_vel = data.get("DRONET_LOG.ang_vel", data.get("ang_vel", 0.0))
+    def _handle_litewing_control(self, data):
+        vx = data.get("ctrltarget.vx", 0.0)
+        vy = data.get("ctrltarget.vy", 0.0)
+        yaw_rate = data.get("ctrltarget.yaw", 0.0)
 
-        self.root.after(0, lambda s=steering, f=fwd_vel, a=ang_vel: self._update_litewing_ui_telemetry(s, f, a))
-        self.root.after(0, lambda: self._append_log(
-            f"LiteWing DRoNet: steer={steering:.4f}, coll={collision:.4f}, fwd_vel={fwd_vel:.4f}, ang_vel={ang_vel:.4f}"))
+        self.root.after(0, lambda y=yaw_rate, fx=vx, fy=vy: self._update_litewing_ui_telemetry(y, fx, fy))
+        # Rate limit logging the control targets so we don't spam the debug output too fast
+        # (It streams at 10Hz, let's just log it occasionally or not at all to keep UI clean)
 
-    def _handle_litewing_uart(self, data):
-        steer = data.get("UART_LOG_GAP8.gap8_steer", data.get("gap8_steer", 0.0))
-        coll = data.get("UART_LOG_GAP8.gap8_coll", data.get("gap8_coll", 0.0))
-        self.root.after(0, lambda: self._append_log(
-            f"LiteWing UART values: steer={steer:.4f}, coll={coll:.4f}"))
-
-    def _update_litewing_ui_telemetry(self, steering, forward_velocity, angular_velocity):
-        self.litewing_steer_var.set(f"LiteWing Steering: {steering:+.4f}")
-        self.litewing_fwd_vel_var.set(f"LiteWing Forward Vel: {forward_velocity:.4f}")
-        self.litewing_ang_vel_var.set(f"LiteWing Ang Vel: {angular_velocity:.4f}")
+    def _update_litewing_ui_telemetry(self, yaw_rate, vx, vy):
+        self.litewing_steer_var.set(f"Target Yaw Rate: {yaw_rate:+.2f} deg/s")
+        self.litewing_fwd_vel_var.set(f"Target Fwd Vel (vx): {vx:+.2f} m/s")
+        self.litewing_ang_vel_var.set(f"Target Lat Vel (vy): {vy:+.2f} m/s")
 
     def _update_ui_telemetry(self, yaw, coll, packets, avoided):
         self.yaw_var.set(f"Vision Yaw: {yaw:+.4f}")
