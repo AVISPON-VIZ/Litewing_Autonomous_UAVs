@@ -249,6 +249,14 @@ class LiteWingGUI:
 
             groups = self._discover_log_groups()
             self._append_log(f"Available log groups: {', '.join(sorted(groups.keys()))}")
+            
+            # Print exact variables in autonomous group to debug
+            if 'autonomous' in groups:
+                auto_vars = [name for name, _ in groups['autonomous']]
+                self._append_log(f"DEBUG: Found autonomous variables: {', '.join(auto_vars)}")
+            if 'ctrltarget' in groups:
+                ctrl_vars = [name for name, _ in groups['ctrltarget']]
+                self._append_log(f"DEBUG: Found ctrltarget variables: {', '.join(ctrl_vars)}")
 
             if 'autonomous' in groups:
                 self._create_log_config(
@@ -297,9 +305,9 @@ class LiteWingGUI:
         try:
             if self.cf and self.cf.log and self.cf.log.toc:
                 for var in self.cf.log.toc.toc.values():
-                    groups.setdefault(var.group, []).append(var.name)
-        except Exception:
-            pass
+                    groups.setdefault(var.group, []).append((var.name, var.ctype))
+        except Exception as e:
+            print(f"Exception in _discover_log_groups: {e}")
         return groups
 
     def _create_log_config(self, name, variables):
@@ -308,9 +316,14 @@ class LiteWingGUI:
             log_config.add_variable(var_name, var_type)
         self.cf.log.add_config(log_config)
         log_config.data_received_cb.add_callback(self._log_data_received)
+        log_config.error_cb.add_callback(self._log_error)
         log_config.start()
         self.log_configs.append(log_config)
         return log_config
+
+    def _log_error(self, logconf, msg):
+        self._append_log(f"LOG ERROR for {logconf.name}: {msg}")
+        print(f"LOG ERROR for {logconf.name}: {msg}")
 
     def _log_data_received(self, timestamp, data, logconf):
         print(f"[DEBUG] _log_data_received CALLED! logconf={logconf.name} data: {data}")
