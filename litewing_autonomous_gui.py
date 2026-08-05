@@ -4151,6 +4151,7 @@ class DeadReckoningGUI:
         position_integral_x = 0.0
         position_integral_y = 0.0
 
+        cflib.crtp.init_drivers()
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
