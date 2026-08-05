@@ -3363,7 +3363,6 @@ class DeadReckoningGUI:
         current_battery_voltage = 0.0
         battery_data_ready = False
 
-        cflib.crtp.init_drivers()
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
@@ -3647,7 +3646,6 @@ class DeadReckoningGUI:
         position_integral_y = 0.0
         waypoint_start_time = time.time()  # Reset timer at start of flight thread
 
-        cflib.crtp.init_drivers()
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
@@ -4153,7 +4151,6 @@ class DeadReckoningGUI:
         position_integral_x = 0.0
         position_integral_y = 0.0
 
-        cflib.crtp.init_drivers()
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
