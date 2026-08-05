@@ -76,9 +76,11 @@ TAKEOFF_TIME = 1.0  # Time to takeoff and stabilize (reduced for steeper ramp)
 HOVER_DURATION = 20.0  # How long to hover with position hold
 LANDING_TIME = 0.5  # Time to land
 # Debug mode - set to True to disable motors (sensors and logging still work)
-DEBUG_MODE = True
+DEBUG_MODE = False
 # Height sensor safety check - set to False to disable emergency stop during takeoff/stabilized
-ENABLE_HEIGHT_SENSOR_SAFETY = False 
+# CHANGED: enabled by default per safety review (a frozen ToF over glass/black surfaces
+# previously caused uncommanded climbs/descents). Disable only for known-textured surfaces.
+ENABLE_HEIGHT_SENSOR_SAFETY = True
 # Filtering strength for velocity smoothing (0.0 = no smoothing, 1.0 = max smoothing)
 VELOCITY_SMOOTHING_ALPHA = 0.85  # Default: 0.7 (previously hardcoded)
 # CSV Logging - set to False to disable CSV file generation
@@ -90,11 +92,38 @@ ENABLE_TAKEOFF_RAMP = False
 TRIM_VX = 0.0  # Forward/backward trim correction
 TRIM_VY = 0.0  # Left/right trim correction
 # Battery monitoring
-LOW_BATTERY_THRESHOLD = 2.9  # Low battery warning threshold in volts
+# CHANGED: raised from 2.9V to 3.3V per safety review. A 1S LiPo at 2.9V is
+# already in deep-discharge territory; brushed motors also sag unpredictably
+# below 3.3V and the drone can flip.
+LOW_BATTERY_THRESHOLD = 3.3  # Low battery warning threshold in volts
 # Height sensor safety
 HEIGHT_SENSOR_MIN_CHANGE = (
     0.005  # Minimum height change expected during takeoff (meters)
 )
+
+# === XIAO CAMERA UART INTEGRATION ===
+# When True, the script will:
+#   1. Subscribe to uartcam.* logs from the firmware (requires UART_CAM_ENABLED
+#      defined at build time on the drone side).
+#   2. Display camera status (active, last yaw, last collision prob, packets).
+#   3. When "Autonomous" mode is toggled ON, switch the laptop's role from
+#      "primary pilot" to "altitude keeper only" — it sends
+#      send_hover_setpoint(0, 0, 0, TARGET_HEIGHT) at 10 Hz so the drone holds
+#      altitude, while the XIAO's UART packets (priority EXTRX=2, higher than
+#      CRTP=1) drive vx/vy/yawrate via the firmware's commander multiplexer.
+#   4. When toggled OFF, the laptop resumes full position-hold control.
+# Requires the modified LiteWing firmware (see XIAO_CAMERA_ENABLE.md).
+ENABLE_XIAO_CAMERA_INTEGRATION = True
+# Camera packet staleness threshold — if no packet for this many seconds,
+# the script logs a warning and auto-disables autonomous mode (laptop
+# takes back full control). Should be > firmware's 500ms watchdog.
+XIAO_CAMERA_STALE_TIMEOUT = 1.5
+# When autonomous mode is active, the laptop sends these velocities
+# (zero) so the XIAO's UART setpoints (priority 2) cleanly override
+# CRTP setpoints (priority 1) for horizontal motion.
+AUTONOMOUS_LAPTOP_VX = 0.0
+AUTONOMOUS_LAPTOP_VY = 0.0
+AUTONOMOUS_LAPTOP_YAWRATE = 0.0
 
 # === DEAD RECKONING POSITION CONTROL PARAMETERS ===
 # PID Controller Parameters
@@ -200,6 +229,22 @@ flight_active = False
 sensor_test_active = False  # New variable for sensor test state
 scf_instance = None
 position_integration_enabled = False
+
+# === XIAO CAMERA STATE (from uartcam.* logs) ===
+# Updated by camera_callback() when uartcam log packets arrive.
+# All access should be under data_lock (same lock as motion data).
+camera_active = False            # uartcam.active (1 if fresh valid packet within timeout)
+camera_last_yaw = 0.0            # uartcam.lastYaw (degrees)
+camera_last_coll = 0.0           # uartcam.lastColl (0..1)
+camera_last_flags = 0            # uartcam.lastFlags (bit0=valid, bit1=collision)
+camera_last_seq = 0              # uartcam.lastSeq
+camera_packets_rx = 0            # uartcam.packetsRx (cumulative)
+camera_setpoints_pushed = 0      # uartcam.setpointsPushed (cumulative)
+camera_last_packet_time = 0.0    # time.time() at last received uartcam log
+camera_integration_supported = False  # True iff firmware exposed uartcam.* logs
+# When True, the laptop intentionally sends (0,0,0,TARGET_HEIGHT) so the XIAO
+# (priority EXTRX=2) wins the commander mux for horizontal motion.
+autonomous_mode_active = False
 # Maneuver state
 maneuver_active = False
 target_position_x = 0.0
@@ -721,6 +766,50 @@ def battery_callback(timestamp, data, logconf):
     battery_data_ready = True
 
 
+def camera_callback(timestamp, data, logconf):
+    """XIAO camera UART data callback (uartcam.* logs).
+
+    Fired by the firmware whenever a fresh valid 8-byte packet is parsed
+    from UART1. Updates the camera_* globals used by the GUI and the
+    autonomous-mode logic.
+
+    If the firmware was compiled WITHOUT UART_CAM_ENABLED, this callback
+    is never registered and the camera_* globals stay at their defaults
+    (camera_integration_supported == False).
+    """
+    global camera_active, camera_last_yaw, camera_last_coll
+    global camera_last_flags, camera_last_seq, camera_packets_rx
+    global camera_setpoints_pushed, camera_last_packet_time
+    global camera_integration_supported
+
+    with data_lock:
+        camera_active = bool(data.get("uartcam.active", 0))
+        camera_last_yaw = float(data.get("uartcam.lastYaw", 0.0))
+        camera_last_coll = float(data.get("uartcam.lastColl", 0.0))
+        camera_last_flags = int(data.get("uartcam.lastFlags", 0))
+        camera_last_seq = int(data.get("uartcam.lastSeq", 0))
+        camera_packets_rx = int(data.get("uartcam.packetsRx", 0))
+        camera_setpoints_pushed = int(data.get("uartcam.setpointsPushed", 0))
+        camera_last_packet_time = time.time()
+        camera_integration_supported = True
+
+
+def is_camera_packet_stale():
+    """True if the camera has not sent a fresh uartcam log within
+    XIAO_CAMERA_STALE_TIMEOUT seconds. Used to auto-disable autonomous
+    mode if the XIAO crashes or freezes."""
+    if camera_last_packet_time == 0.0:
+        return True
+    return (time.time() - camera_last_packet_time) > XIAO_CAMERA_STALE_TIMEOUT
+
+
+def is_camera_collision_warning():
+    """True if the camera is currently reporting a collision.
+    Bit 1 of flags is the collision_warning bit set by the XIAO; we also
+    treat coll_prob > 0.7 as a collision (matches firmware threshold)."""
+    return bool(camera_last_flags & 0x02) or (camera_last_coll > 0.7)
+
+
 def setup_logging(cf, logger=None):
     """Setup motion sensor and battery voltage logging"""
     log_motion = LogConfig(name="Motion", period_in_ms=SENSOR_PERIOD_MS)
@@ -811,7 +900,7 @@ def setup_logging(cf, logger=None):
             else:
                 # Use global logger to redirect to output window
                 log_message("ERROR: Motion log configuration invalid!")
-            return None, None
+            return None, None, None
         if len(added_battery_vars) > 0 and not log_battery.valid:
             if logger:
                 logger("WARNING: Battery log configuration invalid!")
@@ -821,22 +910,83 @@ def setup_logging(cf, logger=None):
             # Continue without battery logging
             log_battery = None
 
+        # === Optional: XIAO camera UART log setup ===
+        # If the firmware was compiled with UART_CAM_ENABLED, the uartcam.*
+        # log variables exist in the TOC and we can subscribe to them.
+        # If not, this block silently skips — the script runs as before.
+        log_camera = None
+        if ENABLE_XIAO_CAMERA_INTEGRATION:
+            try:
+                log_camera = LogConfig(name="Camera", period_in_ms=100)  # 10 Hz
+                camera_variables = [
+                    ("uartcam.active",         "uint8_t"),
+                    ("uartcam.lastFlags",      "uint8_t"),
+                    ("uartcam.lastSeq",        "uint8_t"),
+                    ("uartcam.lastYaw",        "float"),
+                    ("uartcam.lastColl",       "float"),
+                    ("uartcam.packetsRx",      "uint32_t"),
+                    ("uartcam.setpointsPushed","uint32_t"),
+                ]
+                added_camera_vars = []
+                for var_name, var_type in camera_variables:
+                    group, name = var_name.split(".")
+                    if group in toc and name in toc[group]:
+                        try:
+                            log_camera.add_variable(var_name, var_type)
+                            added_camera_vars.append(var_name)
+                        except Exception as e:
+                            if logger:
+                                logger(f"Failed to add camera variable {var_name}: {e}")
+                            else:
+                                log_message(f"Failed to add camera variable {var_name}: {e}")
+                    # else: silently skip — firmware may not have UART_CAM_ENABLED
+
+                if len(added_camera_vars) > 0:
+                    log_camera.data_received_cb.add_callback(camera_callback)
+                    cf.log.add_config(log_camera)
+                    if log_camera.valid:
+                        log_camera.start()
+                        if logger:
+                            logger(f"XIAO camera integration: {len(added_camera_vars)} log vars subscribed")
+                        else:
+                            log_message(f"XIAO camera integration: {len(added_camera_vars)} log vars subscribed")
+                    else:
+                        if logger:
+                            logger("XIAO camera log config invalid — camera integration disabled")
+                        else:
+                            log_message("XIAO camera log config invalid — camera integration disabled")
+                        log_camera = None
+                else:
+                    if logger:
+                        logger("XIAO camera: uartcam.* not in firmware TOC — flash firmware with UART_CAM_ENABLED to enable")
+                    else:
+                        log_message("XIAO camera: uartcam.* not in firmware TOC — flash firmware with UART_CAM_ENABLED to enable")
+                    log_camera = None
+            except Exception as e:
+                if logger:
+                    logger(f"XIAO camera log setup failed (non-fatal): {e}")
+                else:
+                    log_message(f"XIAO camera log setup failed (non-fatal): {e}")
+                log_camera = None
+
         # Start logging
         log_motion.start()
         if log_battery:
             log_battery.start()
+        # log_camera already started above if it exists
 
         time.sleep(0.5)
+        cam_count = len(added_camera_vars) if log_camera else 0
         if logger:
             logger(
-                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars"
+                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars, Camera: {cam_count} vars"
             )
         else:
             # Use global logger to redirect to output window
             log_message(
-                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars"
+                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars, Camera: {cam_count} vars"
             )
-        return log_motion, log_battery
+        return log_motion, log_battery, log_camera
 
     except Exception as e:
         error_msg = f"Logging setup failed: {str(e)}"
@@ -1040,6 +1190,21 @@ class DeadReckoningGUI:
             font=("Arial", 11),
         )
         self.reset_battery_button.pack(side=tk.LEFT, padx=5)
+
+        # === AUTONOMOUS MODE BUTTON (XIAO camera integration) ===
+        # Toggles autonomous_mode_active. When ON, the laptop sends only
+        # altitude commands; the XIAO's UART setpoints drive horizontal motion.
+        # Disabled until a flight is active AND camera integration is supported.
+        self.autonomous_button = tk.Button(
+            control_frame,
+            text="Start Autonomous",
+            command=self.toggle_autonomous_mode,
+            bg="purple",
+            fg="white",
+            font=("Arial", 12),
+            state=tk.DISABLED,
+        )
+        self.autonomous_button.pack(side=tk.LEFT, padx=10)
 
         # Create a frame for the checkboxes to stack them vertically
         checkboxes_frame = tk.Frame(control_frame)
@@ -1754,6 +1919,20 @@ class DeadReckoningGUI:
         tk.Label(
             row4, textvariable=self.corr_vy_var, font=("Arial", 11), fg="red"
         ).pack(side=tk.LEFT, padx=20)
+
+        # Row 5: XIAO camera status (hidden if firmware doesn't expose uartcam.*)
+        row5 = tk.Frame(left_column)
+        row5.pack(fill=tk.X, pady=2)
+        self.camera_status_var = tk.StringVar(
+            value="Camera: not connected (flash firmware with UART_CAM_ENABLED)"
+        )
+        self.camera_label = tk.Label(
+            row5,
+            textvariable=self.camera_status_var,
+            font=("Arial", 10, "bold"),
+            fg="gray",
+        )
+        self.camera_label.pack(side=tk.LEFT, padx=20)
 
         # Control buttons row
         button_row = tk.Frame(left_column)
@@ -2603,10 +2782,37 @@ class DeadReckoningGUI:
         self.corr_vx_var.set(f"Correction VX: {cur_corr_vx:.3f}")
         self.corr_vy_var.set(f"Correction VY: {cur_corr_vy:.3f}")
 
-        # Low battery blinking (visual only)
-        if 0 < current_battery_voltage <= 3.3:
+        # === XIAO camera status display ===
+        if not ENABLE_XIAO_CAMERA_INTEGRATION:
+            self.camera_status_var.set("Camera: disabled in script (ENABLE_XIAO_CAMERA_INTEGRATION=False)")
+            self.camera_label.config(fg="gray")
+        elif not camera_integration_supported:
+            self.camera_status_var.set("Camera: firmware lacks uartcam.* logs (flash with UART_CAM_ENABLED)")
+            self.camera_label.config(fg="gray")
+        elif is_camera_packet_stale():
+            self.camera_status_var.set(
+                f"Camera: STALE (no packets > {XIAO_CAMERA_STALE_TIMEOUT}s) — pkts={camera_packets_rx}"
+            )
+            self.camera_label.config(fg="orange")
+        elif not camera_active:
+            self.camera_status_var.set(
+                f"Camera: inactive — pkts={camera_packets_rx} pushed={camera_setpoints_pushed}"
+            )
+            self.camera_label.config(fg="gray")
+        else:
+            coll_pct = camera_last_coll * 100.0
+            coll_flag = " COLLISION!" if is_camera_collision_warning() else ""
+            auto_flag = " [AUTONOMOUS]" if autonomous_mode_active else ""
+            self.camera_status_var.set(
+                f"Camera: yaw={camera_last_yaw:+.1f}° coll={coll_pct:.0f}%{coll_flag}{auto_flag} "
+                f"pkts={camera_packets_rx} pushed={camera_setpoints_pushed} seq={camera_last_seq}"
+            )
+            self.camera_label.config(fg="red" if is_camera_collision_warning() else "purple4")
+
+        # Low battery blinking (visual only) — uses LOW_BATTERY_THRESHOLD not a hardcoded literal
+        if 0 < current_battery_voltage <= LOW_BATTERY_THRESHOLD:
             if not self.blinking: self.low_battery_blink_start()
-        elif current_battery_voltage > 3.3 and self.low_battery_blinking:
+        elif current_battery_voltage > LOW_BATTERY_THRESHOLD and self.low_battery_blinking:
             self.low_battery_blink_stop()
 
         # Update plots
@@ -3161,6 +3367,7 @@ class DeadReckoningGUI:
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
+        _log_cam = None
 
         try:
             with SyncCrazyflie(DRONE_URI, cf=cf) as scf:
@@ -3173,7 +3380,7 @@ class DeadReckoningGUI:
                 except Exception:
                     pass
                 # Setup logging (same as flight)
-                log_motion, log_battery = setup_logging(cf)
+                log_motion, log_battery, _log_cam = setup_logging(cf)
                 use_position_hold = log_motion is not None
                 if use_position_hold:
                     time.sleep(1.0)
@@ -3229,6 +3436,11 @@ class DeadReckoningGUI:
             if log_battery:
                 try:
                     log_battery.stop()
+                except:
+                    pass
+            if _log_cam:
+                try:
+                    _log_cam.stop()
                 except:
                     pass
             # Disable NeoPixel controls when sensor test stops
@@ -3298,6 +3510,12 @@ class DeadReckoningGUI:
             self.flight_thread.daemon = True
             self.flight_thread.start()
 
+            # Enable autonomous button if camera integration is supported
+            # (will be re-checked at toggle time, in case the camera log vars
+            # arrive slightly after the flight thread starts).
+            if ENABLE_XIAO_CAMERA_INTEGRATION:
+                self.autonomous_button.config(state=tk.NORMAL)
+
             # Log to output window
             self.log_to_output("Flight started")
         elif self.sensor_test_running:
@@ -3337,11 +3555,73 @@ class DeadReckoningGUI:
             # Log joystick stop
             self.log_to_output("Joystick control emergency stopped")
 
+        # Also disable autonomous mode on e-stop
+        global autonomous_mode_active
+        if autonomous_mode_active:
+            autonomous_mode_active = False
+            self.autonomous_button.config(
+                text="Start Autonomous", bg="purple", state=tk.DISABLED
+            )
+            self.log_to_output("Autonomous mode disabled (e-stop)")
+
         self.status_var.set("Status: Emergency Stopped")
+
+    def toggle_autonomous_mode(self):
+        """Toggle XIAO-camera-driven autonomous mode.
+
+        When ON: laptop sends altitude-only hover setpoints; XIAO's UART
+        packets (priority EXTRX=2) drive vx/vy/yawrate.
+        When OFF: laptop resumes full position-hold control.
+
+        Safety: refuses to enable if camera integration is not supported
+        (firmware compiled without UART_CAM_ENABLED) or if no camera
+        packet has been received yet.
+        """
+        global autonomous_mode_active
+
+        if not ENABLE_XIAO_CAMERA_INTEGRATION:
+            self.log_to_output("Autonomous mode: disabled in script config (ENABLE_XIAO_CAMERA_INTEGRATION=False)")
+            return
+
+        if not self.flight_running:
+            self.log_to_output("Autonomous mode: start a flight first")
+            return
+
+        if not camera_integration_supported:
+            self.log_to_output(
+                "Autonomous mode: firmware does not expose uartcam.* logs. "
+                "Flash firmware with UART_CAM_ENABLED defined."
+            )
+            return
+
+        if not autonomous_mode_active:
+            # Enabling
+            if is_camera_packet_stale():
+                self.log_to_output(
+                    "Autonomous mode: refused — no camera packet received yet "
+                    f"(stale > {XIAO_CAMERA_STALE_TIMEOUT}s). Verify XIAO is powered "
+                    "and sending UART packets."
+                )
+                return
+            autonomous_mode_active = True
+            self.autonomous_button.config(text="Stop Autonomous", bg="red")
+            self.log_to_output(
+                "AUTONOMOUS MODE ON — laptop now sends altitude-only; "
+                "XIAO drives vx/vy/yawrate via UART (priority EXTRX=2)."
+            )
+            self.status_var.set("Status: AUTONOMOUS (camera-driven)")
+        else:
+            # Disabling
+            autonomous_mode_active = False
+            self.autonomous_button.config(text="Start Autonomous", bg="purple")
+            self.log_to_output(
+                "AUTONOMOUS MODE OFF — laptop resumes full position-hold control."
+            )
+            self.status_var.set("Status: laptop-controlled hover")
 
     def flight_controller_thread(self):
         """Flight controller running in separate thread"""
-        global flight_phase, flight_active, scf_instance
+        global flight_phase, flight_active, scf_instance, autonomous_mode_active
         global integrated_position_x, integrated_position_y, last_integration_time, last_reset_time
         global maneuver_active, target_position_x, target_position_y
         global shape_active, shape_waypoints, shape_index, waypoint_start_time
@@ -3371,6 +3651,7 @@ class DeadReckoningGUI:
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
+        log_camera = None
 
         # Reset battery voltage for new connection
         current_battery_voltage = 0.0
@@ -3387,7 +3668,7 @@ class DeadReckoningGUI:
 
                 # Setup logging
                 flight_phase = "SETUP"
-                log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
+                log_motion, log_battery, log_camera = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
                 if use_position_hold:
                     time.sleep(1.0)
@@ -3610,6 +3891,46 @@ class DeadReckoningGUI:
                             break # Exit main loop to land
                             
                         flight_phase = "HOVER"
+                        # === AUTONOMOUS MODE (XIAO camera drives horizontal motion) ===
+                        # When autonomous_mode_active is True, the laptop intentionally
+                        # sends (0, 0, 0, TARGET_HEIGHT) so the XIAO's UART setpoints
+                        # (priority EXTRX=2) cleanly win the commander multiplexer
+                        # over CRTP (priority 1) for vx/vy/yawrate. The laptop keeps
+                        # commanding altitude because the firmware's uart_cam_commander
+                        # module sets mode.z = modeDisable (does not touch altitude).
+                        #
+                        # Safety: if the camera packet becomes stale OR the user
+                        # toggles autonomous mode off, we automatically fall back to
+                        # full laptop position-hold control.
+                        if autonomous_mode_active and not DEBUG_MODE:
+                            if is_camera_packet_stale():
+                                self.log_to_output(
+                                    "AUTONOMOUS: camera packet stale > "
+                                    f"{XIAO_CAMERA_STALE_TIMEOUT}s — falling back to laptop control"
+                                )
+                                autonomous_mode_active = False
+                                # Fall through to normal position-hold below
+                            elif not camera_active:
+                                self.log_to_output(
+                                    "AUTONOMOUS: camera reports inactive — falling back to laptop control"
+                                )
+                                autonomous_mode_active = False
+                                # Fall through to normal position-hold below
+                            else:
+                                # Camera is fresh and active: send altitude-only.
+                                # vx/vy/yawrate = 0 → UART setpoint (priority 2) wins.
+                                flight_phase = "AUTONOMOUS"
+                                cf.commander.send_hover_setpoint(
+                                    AUTONOMOUS_LAPTOP_VX,
+                                    AUTONOMOUS_LAPTOP_VY,
+                                    AUTONOMOUS_LAPTOP_YAWRATE,
+                                    TARGET_HEIGHT,
+                                )
+                                log_to_csv()
+                                time.sleep(CONTROL_UPDATE_RATE)
+                                continue
+
+                        # Normal laptop-controlled position-hold (default path)
                         if use_position_hold and sensor_data_ready:
                             motion_vx, motion_vy = calculate_position_hold_corrections()
                             # Check for periodic reset
@@ -3672,6 +3993,14 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
+            if log_camera:
+                try:
+                    log_camera.stop()
+                except:
+                    pass
+            # Always disable autonomous mode on flight exit so the next flight
+            # starts in laptop-controlled mode.
+            autonomous_mode_active = False
             flight_active = False
             self.flight_running = False
             self.update_button(
@@ -3679,6 +4008,14 @@ class DeadReckoningGUI:
                 text="Start Flight",
                 command=self.start_flight,
                 bg="green",
+            )
+            # Disable autonomous button until next flight starts
+            self.update_button(
+                self.autonomous_button,
+                text="Start Autonomous",
+                command=self.toggle_autonomous_mode,
+                bg="purple",
+                state=tk.DISABLED,
             )
             if flight_phase != "COMPLETE":
                 self.update_status(f"Status: {flight_phase}")
@@ -3820,6 +4157,7 @@ class DeadReckoningGUI:
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
+        log_camera = None
 
         # Reset battery voltage for new connection
         current_battery_voltage = 0.0
@@ -3834,7 +4172,7 @@ class DeadReckoningGUI:
                 apply_firmware_parameters(cf, logger=self.log_to_output)
 
                 # Setup logging
-                log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
+                log_motion, log_battery, log_camera = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
                 if use_position_hold:
                     time.sleep(1.0)
@@ -4112,6 +4450,11 @@ class DeadReckoningGUI:
             if log_battery:
                 try:
                     log_battery.stop()
+                except:
+                    pass
+            if log_camera:
+                try:
+                    log_camera.stop()
                 except:
                     pass
             flight_active = False
