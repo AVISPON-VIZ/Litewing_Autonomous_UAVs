@@ -1,11 +1,419 @@
-D:\NEW ONE\LiteWing-main -updated>C:/Users/manoj/AppData/Local/Programs/Python/Python313/python.exe "d:/NEW ONE/LiteWing-main -updated/LiteWing-main/LiteWing-main-xiao-integrated/Python-Scripts/Flight_Positioning_Module/dead-reckoning-maneuvers.py"
-cflib.crtp drivers initialized
-[SENSOR_TEST] Thread started, creating Crazyflie...
-[SENSOR_TEST] init_drivers() done
-[SENSOR_TEST] Connecting to udp://192.168.43.42...
-[SENSOR_TEST] Connected!
-[SENSOR_TEST] Calling setup_logging...
-[SENSOR_TEST] setup_logging returned: motion=True, battery=True, cam=True
-[SENSOR_TEST] use_position_hold=True
-[SENSOR_TEST] Sending zero setpoint...
-[SENSOR_TEST] Setting commander.enHighLevel=1...
+D:\NEW ONE\LiteWing-main -updated\LiteWing-main\LiteWing-main-xiao-integrated>idf.py monitor -p COM3
+Executing action: monitor
+Running idf_monitor in directory 'D:\NEW ONE\LiteWing-main -updated\LiteWing-main\LiteWing-main-xiao-integrated'
+Executing "C:\Espressif\python_env\idf5.3_py3.11_env\Scripts\python.exe C:\Espressif\frameworks\esp-idf-v5.3.5\tools/idf_monitor.py -p COM3 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 'D:\NEW ONE\LiteWing-main -updated\LiteWing-main\LiteWing-main-xiao-integrated\build\ESPDrone.elf' --force-color -m 'C:\Espressif\python_env\idf5.3_py3.11_env\Scripts\python.exe' 'C:\Espressif\frameworks\esp-idf-v5.3.5\tools\idf.py'"...
+--- Warning: GDB cannot open serial ports accessed as COMx
+--- Using \\.\COM3 instead...
+--- esp-idf-monitor 1.9.0 on \\.\COM3 115200
+--- Warning: ELF file 'D:\NEW ONE\LiteWing-main -updated\LiteWing-main\LiteWing-main-xiao-integrated\build\ESPDrone.elf' does not exist
+--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0xb (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x19b4
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xe8c
+load:0x403cb700,len:0x3144
+entry 0x403c8940
+I (27) boot: ESP-IDF v5.3.5-dirty 2nd stage bootloader
+I (27) boot: compile time Aug  5 2026 10:54:04
+I (27) boot: Multicore bootloader
+I (30) boot: chip revision: v0.2
+I (34) boot: efuse block revision: v1.3
+I (39) qio_mode: Enabling default flash chip QIO
+I (44) boot.esp32s3: Boot SPI Speed : 80MHz
+I (49) boot.esp32s3: SPI Mode       : QIO
+I (54) boot.esp32s3: SPI Flash Size : 2MB
+I (58) boot: Enabling RNG early entropy source...
+I (64) boot: Partition Table:
+I (67) boot: ## Label            Usage          Type ST Offset   Length
+I (75) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (82) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (89) boot:  2 factory          factory app      00 00 00010000 00100000
+I (97) boot: End of partition table
+I (101) esp_image: segment 0: paddr=00010020 vaddr=3c0b0020 size=25920h (153888) map
+I (133) esp_image: segment 1: paddr=00035948 vaddr=3fc9cf00 size=05f08h ( 24328) load
+I (138) esp_image: segment 2: paddr=0003b858 vaddr=40374000 size=047c0h ( 18368) load
+I (143) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=a0a70h (658032) map
+I (249) esp_image: segment 4: paddr=000e0a98 vaddr=403787c0 size=146a0h ( 83616) load
+I (276) boot: Loaded app from partition at offset 0x10000
+I (276) boot: Disabling RNG early entropy source...
+I (288) cpu_start: Multicore app
+I (297) cpu_start: Pro cpu start user code
+I (297) cpu_start: cpu freq: 240000000 Hz
+I (297) app_init: Application information:
+I (300) app_init: Project name:     ESPDrone
+I (305) app_init: App version:      1
+I (310) app_init: Compile time:     Aug  5 2026 10:53:46
+I (316) app_init: ELF file SHA256:  1c8697f50...
+I (321) app_init: ESP-IDF:          v5.3.5-dirty
+I (326) efuse_init: Min chip rev:     v0.0
+I (331) efuse_init: Max chip rev:     v0.99
+I (336) efuse_init: Chip rev:         v0.2
+I (341) heap_init: Initializing. RAM available for dynamic allocation:
+I (348) heap_init: At 3FCBA078 len 0002F698 (189 KiB): RAM
+I (354) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (360) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (366) heap_init: At 600FE000 len 00001FE8 (7 KiB): RTCRAM
+I (373) spi_flash: detected chip: generic
+I (377) spi_flash: flash io: qio
+W (381) spi_flash: Detected size(8192k) larger than the size in the binary image header(2048k). Using the size in the binary image header.
+W (394) i2c: This driver is an old driver, please migrate your application code to adapt `driver/i2c_master.h`
+W (405) ADC: legacy driver is deprecated, please migrate to `esp_adc/adc_oneshot.h`
+I (413) sleep: Configure to isolate all GPIO pins in sleep state
+I (420) sleep: Enable automatic switching of GPIO sleep configuration
+I (427) main_task: Started on CPU0
+I (431) main_task: Calling app_main()
+I (444) PLATFORM: set active config
+I (444) gpio: GPIO[9]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (449) gpio: GPIO[8]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (458) gpio: GPIO[7]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (445) main_task: Returned from app_main()
+I (469) pp: pp rom version: e7ae62f
+I (476) net80211: net80211 rom version: e7ae62f
+I (482) wifi:wifi driver task: 3fcbd8c4, prio:23, stack:6656, core=0
+I (491) wifi:wifi firmware version: 18db208
+I (492) wifi:wifi certification version: v7.0
+I (495) wifi:config NVS flash: enabled
+I (499) wifi:config nano formating: disabled
+I (503) wifi:Init data frame dynamic rx buffer num: 32
+I (508) wifi:Init static rx mgmt buffer num: 5
+I (512) wifi:Init management short buffer num: 32
+I (516) wifi:Init dynamic tx buffer num: 32
+I (520) wifi:Init static tx FG buffer num: 2
+I (524) wifi:Init static rx buffer size: 1600
+I (528) wifi:Init static rx buffer num: 10
+I (532) wifi:Init dynamic rx buffer num: 32
+I (536) wifi_init: rx ba win: 6
+I (540) wifi_init: accept mbox: 6
+I (544) wifi_init: tcpip mbox: 32
+I (548) wifi_init: udp mbox: 6
+I (551) wifi_init: tcp mbox: 6
+I (555) wifi_init: tcp tx win: 5760
+I (559) wifi_init: tcp rx win: 5760
+I (563) wifi_init: tcp mss: 1440
+I (567) wifi_init: WiFi IRAM OP enabled
+I (572) wifi_init: WiFi RX IRAM OP enabled
+I (580) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10
+I (631) phy_init: Saving new calibration data due to checksum failure or outdated calibration data, mode(0)
+I (656) wifi:mode : softAP (10:51:db:4c:7a:85)
+I (659) wifi:Total power save buffer number: 16
+I (659) wifi:Init max length of beacon: 752/752
+I (659) wifi:Init max length of beacon: 752/752
+I (663) espnow: esp-now Version: 2.5.3
+I (664) esp_netif_lwip: DHCP server started on interface WIFI_AP_DEF with IP: 192.168.4.1
+I (676) ESPNOW: espnow [version: 1.0] init
+I (680) espnow: mac: 10:51:db:4c:7a:84, version: 2
+I (685) espnow: Enable main task
+I (689) espnow: main task entry
+I (690) WIFI_UDP: wifi_init_softap complete.SSID:LiteWing_1051DB4C7A85 password:12345678
+I (701) WIFI_UDP: Socket created
+I (705) WIFI_UDP: Socket bound, port 2390
+I (710) WIFI_UDP: UDP server create socket succeed
+I (1150) wifi:new:<6,0>, old:<6,0>, ap:<6,0>, sta:<255,255>, prof:6, snd_ch_cfg:0x0
+I (1150) wifi:station: 6c:2f:80:c1:a3:09 join, AID=1, bgn, 20
+I (1215) SYS: ----------------------------
+
+I (1215) SYS: ESPlane 2.0  is up and running!
+
+I (1215) I2CDRV:  i2c 1 driver install return = 0
+I (1219) EEPROM: spi_flash_init ... !
+I (1223) EEPROM: spi_flash_read ok !
+Characterized using Default Vref
+I (1231) gpio: GPIO[38]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0
+I (1246) WIFI_UDP: station6c:2f:80:c1:a3:09join, AID=1
+I (1246) espnow: station 6c:2f:80:c1:a3:09 join, AID=1
+E (1256) uart: uart_driver_install(1895): uart tx buffer length error
+I (1258) esp_netif_lwip: DHCP server assigned IP to a client, IP is: 192.168.43.43
+E (1259) UARTCAM: UARTCAM: uart_driver_install failed: ESP_FAIL
+
+E (1274) UARTCAM: UARTCAM: module will stay inert. Drone flies normally.
+
+I (1357) wifi:<ba-add>idx:2 (ifx:1, 6c:2f:80:c1:a3:09), tid:0, ssn:12, winSize:64
+I (2431) I2CDRV:  i2c 0 driver install return = 0
+I (2431) SENSORS: MPU6050 I2C connection [OK].
+
+I (2798) ZR2: Z-down sensor [OK]
+
+I (2798) SENSORS: VL53L1X I2C connection [OK].
+
+I (2798) gpio: GPIO[42]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (2903) MODE: FlightMode = 2
+I (2904) SENSORS: PMW3901 SPI connection [OK].
+
+I (2904) SENSORS: sensors init done
+I (2906) SENSORS: pitch_calib = 0.000000,roll_calib = 0.000000
+I (2912) gpio: GPIO[12]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:1
+I (2922) ESTIMATOR: Using Kalman (2) estimator
+
+I (2927) POSITION_CONTROLLER: thrustBase = 24000,thrustMin  = 5000
+I (2934) SYS: wifilinkTest = 1
+I (3437) SYS: pmTest = 1
+I (3437) SYS: workerTest = 1
+I (3437) SYS: systemTest = 1
+I (3437) SYS: configblockTest = 1
+I (3440) COMM: wifilinkTest = 1
+I (3444) COMM: crtpTest = 1
+I (3448) COMM: crtpserviceTest = 1
+I (3452) COMM: platformserviceTest = 1
+I (3456) COMM: consoleTest = 1
+I (3460) COMM: paramTest = 1
+I (3464) SYS: commTest = 1
+I (3467) SYS: commanderTest = 1
+I (5287) SYS: stabilizerTest = 1
+I (5287) SYS: estimatorKalmanTaskTest = 1
+I (5287) SYS: soundTest = 1
+No one-wire memory handler registered
+I (5291) SYS: memTest = 1
+I (5295) STAB: Wait for sensor calibration...
+
+I (5300) SYS: systemStart ! selftestPassed = 1
+I (6217) SYSLOAD: Task dump
+I (6217) SYSLOAD: Load  Stack left      Name    PRI
+I (6217) SYSLOAD: 0.13  2064    Tmr Svc         1
+I (6219) SYSLOAD: 86.37         1248    IDLE0   0
+I (6224) SYSLOAD: 96.94         1256    IDLE1   0
+I (6228) SYSLOAD: 0.23  2980    STABILIZER      7
+I (6233) SYSLOAD: 1.43  2492    ZRANGER2        5
+I (6238) SYSLOAD: 0.01  2268    CRTP-RX         2
+I (6242) SYSLOAD: 0.15  3140    PWRMGNT         1
+I (6247) SYSLOAD: 0.53  1216    tiT     18
+I (6251) SYSLOAD: 0.94  2060    FLOW    5
+I (6255) SYSLOAD: 0.06  1860    espnow_main     1
+I (6260) SYSLOAD: 0.00  3308    UDP_TX  2
+I (6265) SYSLOAD: 0.00  2916    UDP_RX  2
+I (6269) SYSLOAD: 0.00  3264    WIFILINK        2
+I (6274) SYSLOAD: 0.00  2300    CRTP-TX         2
+I (6279) SYSLOAD: 0.00  2264    LOG     2
+I (6283) SYSLOAD: 0.00  1236    PARAM   2
+I (6287) SYSLOAD: 0.00  1212    CMDHL   3
+I (6292) SYSLOAD: 0.11  620     sys_evt         20
+I (6296) SYSLOAD: 0.94  304     ipc0    18
+I (6301) SYSLOAD: 0.00  2064    KALMAN  4
+I (6305) SYSLOAD: 0.00  1252    MEM     2
+I (6310) SYSLOAD: 5.14  3308    SYSTEM  1
+I (6314) SYSLOAD: 0.00  1264    LEDSEQCMD       1
+I (6319) SYSLOAD: 3.04  3920    wifi    23
+I (6323) SYSLOAD: 0.06  3136    esp_timer       22
+I (6328) SYSLOAD: 1.98  4048    SENSORS         6
+I (6333) SYSLOAD: 1.48  552     ipc1    24
+I (6337) SYSLOAD: Free heap: 137880 bytes
+I (6525) SENSORS: isBiasValueFound!
+I (6527) STAB: Ready to fly.
+
+Guru Meditation Error: Core  0 panic'ed (InstrFetchProhibited). Exception was unhandled.
+
+Core  0 register dump:
+PC      : 0x81004136  PS      : 0x00060230  A0      : 0x82010116  A1      : 0x3fca4f20
+A2      : 0x3fcaf3dc  A3      : 0x00000000  A4      : 0xfffffff0  A5      : 0xffffffef
+A6      : 0x00000000  A7      : 0x3fcae248  A8      : 0x82014930  A9      : 0x81004136
+A10     : 0x00008b12  A11     : 0x0882c4e2  A12     : 0x00000001  A13     : 0x3fcaf020
+A14     : 0xffffffff  A15     : 0x3fcaf050  SAR     : 0x00000010  EXCCAUSE: 0x00000014
+EXCVADDR: 0x81004134  LBEG    : 0x40056f5c  LEND    : 0x40056f72  LCOUNT  : 0xffffffff
+
+
+Backtrace: 0x41004133:0x3fca4f20 0x42010113:0x3fca4f60 0x4200fb73:0x3fca4f90
+
+
+
+
+ELF file SHA256: 1c8697f50
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0xb (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40375e40
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x19b4
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xe8c
+load:0x403cb700,len:0x3144
+entry 0x403c8940
+I (31) boot: ESP-IDF v5.3.5-dirty 2nd stage bootloader
+I (31) boot: compile time Aug  5 2026 10:54:04
+I (31) boot: Multicore bootloader
+I (35) boot: chip revision: v0.2
+I (39) boot: efuse block revision: v1.3
+I (43) qio_mode: Enabling default flash chip QIO
+I (48) boot.esp32s3: Boot SPI Speed : 80MHz
+I (53) boot.esp32s3: SPI Mode       : QIO
+I (58) boot.esp32s3: SPI Flash Size : 2MB
+I (63) boot: Enabling RNG early entropy source...
+I (68) boot: Partition Table:
+I (72) boot: ## Label            Usage          Type ST Offset   Length
+I (79) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (86) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (94) boot:  2 factory          factory app      00 00 00010000 00100000
+I (101) boot: End of partition table
+I (106) esp_image: segment 0: paddr=00010020 vaddr=3c0b0020 size=25920h (153888) map
+I (138) esp_image: segment 1: paddr=00035948 vaddr=3fc9cf00 size=05f08h ( 24328) load
+I (143) esp_image: segment 2: paddr=0003b858 vaddr=40374000 size=047c0h ( 18368) load
+I (147) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=a0a70h (658032) map
+I (254) esp_image: segment 4: paddr=000e0a98 vaddr=403787c0 size=146a0h ( 83616) load
+I (281) boot: Loaded app from partition at offset 0x10000
+I (281) boot: Disabling RNG early entropy source...
+I (293) cpu_start: Multicore app
+I (302) cpu_start: Pro cpu start user code
+I (302) cpu_start: cpu freq: 240000000 Hz
+I (302) app_init: Application information:
+I (305) app_init: Project name:     ESPDrone
+I (310) app_init: App version:      1
+I (314) app_init: Compile time:     Aug  5 2026 10:53:46
+I (320) app_init: ELF file SHA256:  1c8697f50...
+I (325) app_init: ESP-IDF:          v5.3.5-dirty
+I (331) efuse_init: Min chip rev:     v0.0
+I (335) efuse_init: Max chip rev:     v0.99
+I (340) efuse_init: Chip rev:         v0.2
+I (345) heap_init: Initializing. RAM available for dynamic allocation:
+I (352) heap_init: At 3FCBA078 len 0002F698 (189 KiB): RAM
+I (358) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (365) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (371) heap_init: At 600FE000 len 00001FE8 (7 KiB): RTCRAM
+I (378) spi_flash: detected chip: generic
+I (382) spi_flash: flash io: qio
+W (386) spi_flash: Detected size(8192k) larger than the size in the binary image header(2048k). Using the size in the binary image header.
+W (399) i2c: This driver is an old driver, please migrate your application code to adapt `driver/i2c_master.h`
+W (410) ADC: legacy driver is deprecated, please migrate to `esp_adc/adc_oneshot.h`
+I (418) sleep: Configure to isolate all GPIO pins in sleep state
+I (425) sleep: Enable automatic switching of GPIO sleep configuration
+I (432) main_task: Started on CPU0
+I (436) main_task: Calling app_main()
+I (449) PLATFORM: set active config
+I (449) gpio: GPIO[9]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (454) gpio: GPIO[8]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (463) gpio: GPIO[7]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (450) main_task: Returned from app_main()
+I (474) pp: pp rom version: e7ae62f
+I (481) net80211: net80211 rom version: e7ae62f
+I (487) wifi:wifi driver task: 3fcbd8c4, prio:23, stack:6656, core=0
+I (496) wifi:wifi firmware version: 18db208
+I (497) wifi:wifi certification version: v7.0
+I (500) wifi:config NVS flash: enabled
+I (504) wifi:config nano formating: disabled
+I (508) wifi:Init data frame dynamic rx buffer num: 32
+I (513) wifi:Init static rx mgmt buffer num: 5
+I (517) wifi:Init management short buffer num: 32
+I (521) wifi:Init dynamic tx buffer num: 32
+I (525) wifi:Init static tx FG buffer num: 2
+I (529) wifi:Init static rx buffer size: 1600
+I (533) wifi:Init static rx buffer num: 10
+I (537) wifi:Init dynamic rx buffer num: 32
+I (541) wifi_init: rx ba win: 6
+I (545) wifi_init: accept mbox: 6
+I (549) wifi_init: tcpip mbox: 32
+I (553) wifi_init: udp mbox: 6
+I (556) wifi_init: tcp mbox: 6
+I (560) wifi_init: tcp tx win: 5760
+I (564) wifi_init: tcp rx win: 5760
+I (568) wifi_init: tcp mss: 1440
+I (572) wifi_init: WiFi IRAM OP enabled
+I (577) wifi_init: WiFi RX IRAM OP enabled
+I (585) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10
+I (625) wifi:mode : softAP (10:51:db:4c:7a:85)
+I (628) wifi:Total power save buffer number: 16
+I (628) wifi:Init max length of beacon: 752/752
+I (628) wifi:Init max length of beacon: 752/752
+I (632) espnow: esp-now Version: 2.5.3
+I (633) esp_netif_lwip: DHCP server started on interface WIFI_AP_DEF with IP: 192.168.4.1
+I (645) ESPNOW: espnow [version: 1.0] init
+I (649) espnow: mac: 10:51:db:4c:7a:84, version: 2
+I (654) espnow: Enable main task
+I (658) espnow: main task entry
+I (659) WIFI_UDP: wifi_init_softap complete.SSID:LiteWing_1051DB4C7A85 password:12345678
+I (671) WIFI_UDP: Socket created
+I (674) WIFI_UDP: Socket bound, port 2390
+I (679) WIFI_UDP: UDP server create socket succeed
+I (979) wifi:new:<6,0>, old:<6,0>, ap:<6,0>, sta:<255,255>, prof:6, snd_ch_cfg:0x0
+I (979) wifi:station: 6c:2f:80:c1:a3:09 join, AID=1, bgn, 20
+I (1068) WIFI_UDP: station6c:2f:80:c1:a3:09join, AID=1
+I (1069) espnow: station 6c:2f:80:c1:a3:09 join, AID=1
+I (1079) esp_netif_lwip: DHCP server assigned IP to a client, IP is: 192.168.43.43
+I (1185) SYS: ----------------------------
+
+I (1185) SYS: ESPlane 2.0  is up and running!
+
+I (1185) I2CDRV:  i2c 1 driver install return = 0
+I (1189) EEPROM: spi_flash_init ... !
+I (1193) EEPROM: spi_flash_read ok !
+Characterized using Default Vref
+I (1201) gpio: GPIO[38]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0
+E (1216) uart: uart_driver_install(1895): uart tx buffer length error
+E (1217) UARTCAM: UARTCAM: uart_driver_install failed: ESP_FAIL
+
+E (1224) UARTCAM: UARTCAM: module will stay inert. Drone flies normally.
+
+I (1404) wifi:<ba-add>idx:2 (ifx:1, 6c:2f:80:c1:a3:09), tid:0, ssn:11, winSize:64
+I (2432) I2CDRV:  i2c 0 driver install return = 0
+I (2432) SENSORS: MPU6050 I2C connection [OK].
+
+I (2799) ZR2: Z-down sensor [OK]
+
+I (2799) SENSORS: VL53L1X I2C connection [OK].
+
+I (2799) gpio: GPIO[42]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
+I (2904) MODE: FlightMode = 2
+I (2905) SENSORS: PMW3901 SPI connection [OK].
+
+I (2905) SENSORS: sensors init done
+I (2907) SENSORS: pitch_calib = 0.000000,roll_calib = 0.000000
+I (2913) gpio: GPIO[12]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:1
+I (2923) ESTIMATOR: Using Kalman (2) estimator
+
+I (2928) POSITION_CONTROLLER: thrustBase = 24000,thrustMin  = 5000
+I (2935) SYS: wifilinkTest = 1
+I (3438) SYS: pmTest = 1
+I (3438) SYS: workerTest = 1
+I (3438) SYS: systemTest = 1
+I (3438) SYS: configblockTest = 1
+I (3441) COMM: wifilinkTest = 1
+I (3445) COMM: crtpTest = 1
+I (3449) COMM: crtpserviceTest = 1
+I (3453) COMM: platformserviceTest = 1
+I (3457) COMM: consoleTest = 1
+I (3461) COMM: paramTest = 1
+I (3465) SYS: commTest = 1
+I (3468) SYS: commanderTest = 1
+I (6186) SYSLOAD: Task dump
+I (6187) SYSLOAD: Load  Stack left      Name    PRI
+I (6187) SYSLOAD: 0.11  2064    Tmr Svc         1
+I (6188) SYSLOAD: 97.29         1256    IDLE1   0
+I (6193) SYSLOAD: 91.96         1248    IDLE0   0
+I (6197) SYSLOAD: 0.39  1228    tiT     18
+I (6202) SYSLOAD: 5.08  3308    SYSTEM  1
+I (6206) SYSLOAD: 0.02  2268    CRTP-RX         2
+I (6211) SYSLOAD: 0.06  1868    espnow_main     1
+I (6216) SYSLOAD: 0.00  3296    UDP_TX  2
+I (6220) SYSLOAD: 0.02  616     sys_evt         20
+I (6225) SYSLOAD: 0.00  3300    PWRMGNT         1
+I (6229) SYSLOAD: 0.00  2264    LOG     2
+I (6234) SYSLOAD: 0.00  2300    CRTP-TX         2
+I (6238) SYSLOAD: 0.00  1236    PARAM   2
+I (6243) SYSLOAD: 0.00  1212    CMDHL   3
+I (6247) SYSLOAD: 0.00  2064    KALMAN  4
+I (6252) SYSLOAD: 0.00  3264    WIFILINK        2
+I (6256) SYSLOAD: 0.00  2920    UDP_RX  2
+I (6261) SYSLOAD: 0.00  1284    LEDSEQCMD       1
+I (6266) SYSLOAD: 0.00  3248    ZRANGER2        5
+I (6270) SYSLOAD: 0.00  2252    FLOW    5
+I (6275) SYSLOAD: 0.95  464     ipc0    5
+I (6279) SYSLOAD: 0.00  4320    SENSORS         6
+I (6283) SYSLOAD: 0.00  4228    STABILIZER      7
+I (6288) SYSLOAD: 0.00  1252    MEM     2
+I (6293) SYSLOAD: 0.06  3136    esp_timer       22
+I (6297) SYSLOAD: 2.48  3932    wifi    23
+I (6302) SYSLOAD: 1.13  552     ipc1    24
+I (6306) SYSLOAD: Free heap: 138192 bytes
+I (13478) SYS: stabilizerTest = 1
+I (13478) SYS: estimatorKalmanTaskTest = 1
+I (13478) SYS: soundTest = 1
+No one-wire memory handler registered
+I (13483) SYS: memTest = 1
+I (13486) STAB: Wait for sensor calibration...
+
+I (13491) SYS: systemStart ! selftestPassed = 1
+I (14786) SENSORS: isBiasValueFound!
+I (14787) STAB: Ready to fly.
