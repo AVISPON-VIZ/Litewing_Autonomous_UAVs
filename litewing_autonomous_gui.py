@@ -3394,17 +3394,32 @@ class DeadReckoningGUI:
 
                 # Initialize flight parameters (skip if in debug mode, but logging still happens)
                 if not DEBUG_MODE:
+                    print("[SENSOR_TEST] Sending zero setpoint...")
                     cf.commander.send_setpoint(0, 0, 0, 0)
                     time.sleep(0.1)
-                    cf.param.set_value("commander.enHighLevel", "1")
+                    print("[SENSOR_TEST] Setting commander.enHighLevel=1...")
+                    try:
+                        # set_value is synchronous and can hang if param ACK is lost
+                        # Use a background thread with timeout to prevent blocking
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(cf.param.set_value, "commander.enHighLevel", "1")
+                            future.result(timeout=5.0)  # 5 second timeout
+                        print("[SENSOR_TEST] enHighLevel set OK")
+                    except concurrent.futures.TimeoutError:
+                        print("[SENSOR_TEST] WARNING: param.set_value timed out after 5s, continuing anyway")
+                    except Exception as e:
+                        print(f"[SENSOR_TEST] WARNING: param.set_value failed: {e}, continuing anyway")
                     time.sleep(0.5)
                 else:
                     self.log_to_output(
                         "DEBUG MODE: Skipping flight initialization for sensor test"
                     )
 
+                print("[SENSOR_TEST] Calling reset_position_tracking...")
                 # Enable position integration for sensor test
                 reset_position_tracking()
+                print("[SENSOR_TEST] reset_position_tracking done")
 
                 # Run sensor test loop (no motor commands)
                 flight_phase = "SENSOR_TEST"
@@ -3701,7 +3716,13 @@ class DeadReckoningGUI:
                 if not DEBUG_MODE:
                     cf.commander.send_setpoint(0, 0, 0, 0)
                     time.sleep(0.1)
-                    cf.param.set_value("commander.enHighLevel", "1")
+                    try:
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(cf.param.set_value, "commander.enHighLevel", "1")
+                            future.result(timeout=5.0)
+                    except Exception:
+                        print("[FLIGHT] WARNING: param.set_value timed out or failed, continuing")
                     time.sleep(0.5)
                 else:
                     self.log_to_output("DEBUG MODE: Skipping flight initialization")
@@ -4205,7 +4226,13 @@ class DeadReckoningGUI:
                 if not DEBUG_MODE:
                     cf.commander.send_setpoint(0, 0, 0, 0)
                     time.sleep(0.1)
-                    cf.param.set_value("commander.enHighLevel", "1")
+                    try:
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(cf.param.set_value, "commander.enHighLevel", "1")
+                            future.result(timeout=5.0)
+                    except Exception:
+                        print("[JOYSTICK] WARNING: param.set_value timed out or failed, continuing")
                     time.sleep(0.5)
                 else:
                     self.log_to_output(
