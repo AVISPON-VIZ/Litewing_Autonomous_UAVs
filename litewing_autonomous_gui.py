@@ -852,7 +852,7 @@ def setup_logging(cf, logger=None):
             else:
                 # Use global logger to redirect to output window
                 log_message("ERROR: Not enough motion variables found!")
-            return None, None
+            return None, None, None
 
         # Setup battery logging
         battery_variables = [("pm.vbat", "float")]
@@ -3363,13 +3363,18 @@ class DeadReckoningGUI:
         current_battery_voltage = 0.0
         battery_data_ready = False
 
+        print("[SENSOR_TEST] Thread started, creating Crazyflie...")
+        cflib.crtp.init_drivers()
+        print("[SENSOR_TEST] init_drivers() done")
         cf = Crazyflie(rw_cache="./cache")
         log_motion = None
         log_battery = None
         _log_cam = None
 
         try:
+            print(f"[SENSOR_TEST] Connecting to {DRONE_URI}...")
             with SyncCrazyflie(DRONE_URI, cf=cf) as scf:
+                print("[SENSOR_TEST] Connected!")
                 scf_instance = scf
                 # Enable NeoPixel controls now that a Crazyflie link is established
                 try:
@@ -3379,10 +3384,13 @@ class DeadReckoningGUI:
                 except Exception:
                     pass
                 # Setup logging (same as flight)
+                print("[SENSOR_TEST] Calling setup_logging...")
                 log_motion, log_battery, _log_cam = setup_logging(cf)
+                print(f"[SENSOR_TEST] setup_logging returned: motion={log_motion is not None}, battery={log_battery is not None}, cam={_log_cam is not None}")
                 use_position_hold = log_motion is not None
                 if use_position_hold:
                     time.sleep(1.0)
+                print(f"[SENSOR_TEST] use_position_hold={use_position_hold}")
 
                 # Initialize flight parameters (skip if in debug mode, but logging still happens)
                 if not DEBUG_MODE:
@@ -3401,6 +3409,7 @@ class DeadReckoningGUI:
                 # Run sensor test loop (no motor commands)
                 flight_phase = "SENSOR_TEST"
                 start_time = time.time()
+                print("[SENSOR_TEST] Entering sensor test loop...")
                 if self.enable_sensor_logging_var.get():
                     init_csv_logging(logger=self.log_to_output)
                 while sensor_test_active:  # Continue while sensor test is active
@@ -3422,6 +3431,9 @@ class DeadReckoningGUI:
                         log_to_csv()
         except Exception as e:
             flight_phase = "ERROR"
+            import traceback
+            print(f"[SENSOR_TEST] EXCEPTION: {e}")
+            traceback.print_exc()
             self.log_to_output(f"Sensor Test Error: {str(e)}")
         finally:
             # Stop logging
