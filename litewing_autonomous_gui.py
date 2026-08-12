@@ -3392,25 +3392,13 @@ class DeadReckoningGUI:
                     time.sleep(1.0)
                 print(f"[SENSOR_TEST] use_position_hold={use_position_hold}")
 
-                # Initialize flight parameters (skip if in debug mode, but logging still happens)
+                # Sensor test: do NOT send any motor/flight commands.
+                # We only need logging to be active to read sensor data.
+                # Sending send_setpoint() or setting commander.enHighLevel
+                # would activate the motor controller and cause the drone
+                # to briefly spin up, which is dangerous and unnecessary.
                 if not DEBUG_MODE:
-                    print("[SENSOR_TEST] Sending zero setpoint...")
-                    cf.commander.send_setpoint(0, 0, 0, 0)
-                    time.sleep(0.1)
-                    print("[SENSOR_TEST] Setting commander.enHighLevel=1...")
-                    try:
-                        # set_value is synchronous and can hang if param ACK is lost
-                        # Use a background thread with timeout to prevent blocking
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(cf.param.set_value, "commander.enHighLevel", "1")
-                            future.result(timeout=5.0)  # 5 second timeout
-                        print("[SENSOR_TEST] enHighLevel set OK")
-                    except concurrent.futures.TimeoutError:
-                        print("[SENSOR_TEST] WARNING: param.set_value timed out after 5s, continuing anyway")
-                    except Exception as e:
-                        print(f"[SENSOR_TEST] WARNING: param.set_value failed: {e}, continuing anyway")
-                    time.sleep(0.5)
+                    print("[SENSOR_TEST] Skipping motor init (sensor-only mode)")
                 else:
                     self.log_to_output(
                         "DEBUG MODE: Skipping flight initialization for sensor test"
@@ -3478,6 +3466,7 @@ class DeadReckoningGUI:
             except Exception:
                 pass
             sensor_test_active = False
+            scf_instance = None  # Clear so start_flight can create a fresh connection
             flight_phase = "IDLE"
             self.sensor_test_running = False
             self.update_button(
