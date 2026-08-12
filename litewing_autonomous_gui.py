@@ -236,7 +236,7 @@ position_integration_enabled = False
 camera_active = False            # uartcam.active (1 if fresh valid packet within timeout)
 camera_last_yaw = 0.0            # uartcam.lastYaw (degrees)
 camera_last_coll = 0.0           # uartcam.lastColl (0..1)
-camera_last_flags = 0            # uartcam.lastFlags (bit0=valid, bit1=collision)
+camera_last_flags = 0            # uartcam.lastFlags (bit0=collision, bit1=model_valid)
 camera_last_seq = 0              # uartcam.lastSeq
 camera_packets_rx = 0            # uartcam.packetsRx (cumulative)
 camera_setpoints_pushed = 0      # uartcam.setpointsPushed (cumulative)
@@ -529,32 +529,51 @@ def periodic_position_reset():
 
 def apply_firmware_parameters(cf, logger=None):
     """
-    Apply custom vertical PID and thrust parameters to the drone's brain.
-    Only takes effect if ENABLE_FIRMWARE_PARAMS is True.
+    Apply firmware parameters on connection.
+
+    CRITICAL: The uartcam.enabled='0' call ALWAYS runs (regardless of
+    ENABLE_FIRMWARE_PARAMS). The PID/thrust tuning block below is optional.
+
+    The firmware's uart_cam_commander module pushes setpoints at priority
+    EXTRX (2). The Crazyflie commander queue is single-entry (not per-axis),
+    so a priority-2 push COMPLETELY OVERWRITES Python's priority-1 hover
+    commands. The firmware's setpoint uses mode.z=modeDisable with thrust=0
+    (from memset), which zeroes all motor outputs and causes the drone to
+    fall. Disabling uartcam.enabled makes Python the sole commander — it
+    reads camera data from uartcam.* log variables (which still flow even
+    when s_enabled=0, since the RX task runs independently) and sends
+    complete hover setpoints that include altitude.
     """
+    # --- ALWAYS disable firmware-level camera setpoint pushing ---
+    try:
+        cf.param.set_value('uartcam.enabled', '0')
+        if logger:
+            logger("Disabled firmware uartcam setpoint pushing (Python is sole commander)")
+    except Exception as e:
+        if logger:
+            logger(
+                f"NOTE: Could not set uartcam.enabled=0 (non-fatal — "
+                f"firmware may lack UART_CAM_ENABLED): {e}"
+            )
+
+    # --- Optional PID/thrust tuning (only if ENABLE_FIRMWARE_PARAMS) ---
     if not ENABLE_FIRMWARE_PARAMS:
         return
-        
+
     try:
         if logger: logger("Applying custom firmware parameters (Z-Axis/Thrust)...")
         # Set parameters as strings since cflib expects that/it's safer for radio transport
         cf.param.set_value('posCtlPid.thrustBase', str(FW_THRUST_BASE))
         cf.param.set_value('posCtlPid.zKp', str(FW_Z_POS_KP))
         cf.param.set_value('velCtlPid.vzKp', str(FW_Z_VEL_KP))
-        
-        # Disable firmware-level setpoint pushing for the camera.
-        # The firmware's camera module (uart_cam_commander) mistakenly disabled
-        # the Z-axis, causing the drone to fall. We now handle the camera data
-        # entirely in Python using the CRTP log variables.
-        cf.param.set_value('uartcam.enabled', '0')
-        
+
         # Brief wait to ensure the drone processed the parameters
         time.sleep(0.2)
-        
+
         # Verify the most important one
         actual_thrust = cf.param.get_value('posCtlPid.thrustBase')
         if logger: logger(f"Firmware configured: thrustBase={actual_thrust}, zKp={FW_Z_POS_KP}, vzKp={FW_Z_VEL_KP}")
-        
+
     except Exception as e:
         if logger: logger(f"WARNING: Failed to set firmware parameters: {str(e)}")
 
@@ -811,9 +830,9 @@ def is_camera_packet_stale():
 
 def is_camera_collision_warning():
     """True if the camera is currently reporting a collision.
-    Bit 1 of flags is the collision_warning bit set by the XIAO; we also
-    treat coll_prob > 0.7 as a collision (matches firmware threshold)."""
-    return bool(camera_last_flags & 0x02) or (camera_last_coll > 0.7)
+    Bit 0 of flags is the collision bit set by the XIAO (coll_prob > 0.5);
+    we also treat coll_prob > 0.7 as a collision (matches firmware threshold)."""
+    return bool(camera_last_flags & 0x01) or (camera_last_coll > 0.7)
 
 
 def setup_logging(cf, logger=None):
@@ -3627,8 +3646,8 @@ class DeadReckoningGUI:
             autonomous_mode_active = True
             self.autonomous_button.config(text="Stop Autonomous", bg="red")
             self.log_to_output(
-                "AUTONOMOUS MODE ON — laptop now sends altitude-only; "
-                "XIAO drives vx/vy/yawrate via UART (priority EXTRX=2)."
+                "AUTONOMOUS MODE ON — Python reads uartcam.* logs and sends "
+                "complete hover setpoints (vx/yawrate from camera, altitude held)."
             )
             self.status_var.set("Status: AUTONOMOUS (camera-driven)")
         else:
@@ -3918,12 +3937,16 @@ class DeadReckoningGUI:
                             
                         flight_phase = "HOVER"
                         # === AUTONOMOUS MODE (XIAO camera drives horizontal motion) ===
-                        # When autonomous_mode_active is True, the laptop intentionally
-                        # sends (0, 0, 0, TARGET_HEIGHT) so the XIAO's UART setpoints
-                        # (priority EXTRX=2) cleanly win the commander multiplexer
-                        # over CRTP (priority 1) for vx/vy/yawrate. The laptop keeps
-                        # commanding altitude because the firmware's uart_cam_commander
-                        # module sets mode.z = modeDisable (does not touch altitude).
+                        # The firmware's uart_cam_commander setpoint pushing is
+                        # DISABLED (uartcam.enabled=0, set in apply_firmware_parameters)
+                        # because it pushes thrust=0 setpoints at priority 2 that
+                        # overwrite Python's altitude commands and starve the motors.
+                        #
+                        # Instead, Python is the SOLE commander here. It reads camera
+                        # data from uartcam.* log variables (which still flow because
+                        # the firmware RX task runs independently of s_enabled) and
+                        # sends COMPLETE hover setpoints (vx, vy, yawrate, altitude)
+                        # at CRTP priority 1.
                         #
                         # Safety: if the camera packet becomes stale OR the user
                         # toggles autonomous mode off, we automatically fall back to
