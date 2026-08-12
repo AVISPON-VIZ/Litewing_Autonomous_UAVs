@@ -542,6 +542,12 @@ def apply_firmware_parameters(cf, logger=None):
         cf.param.set_value('posCtlPid.zKp', str(FW_Z_POS_KP))
         cf.param.set_value('velCtlPid.vzKp', str(FW_Z_VEL_KP))
         
+        # Disable firmware-level setpoint pushing for the camera.
+        # The firmware's camera module (uart_cam_commander) mistakenly disabled
+        # the Z-axis, causing the drone to fall. We now handle the camera data
+        # entirely in Python using the CRTP log variables.
+        cf.param.set_value('uartcam.enabled', '0')
+        
         # Brief wait to ensure the drone processed the parameters
         time.sleep(0.2)
         
@@ -3937,13 +3943,26 @@ class DeadReckoningGUI:
                                 autonomous_mode_active = False
                                 # Fall through to normal position-hold below
                             else:
-                                # Camera is fresh and active: send altitude-only.
-                                # vx/vy/yawrate = 0 → UART setpoint (priority 2) wins.
+                                # Camera is fresh and active: compute steering from log data.
                                 flight_phase = "AUTONOMOUS"
+                                
+                                # Safety: if collision probability > 0.5 or flag is set
+                                if is_camera_collision_warning():
+                                    cam_vx = 0.0
+                                    cam_yawrate = 0.0
+                                else:
+                                    # Translate camera yaw (degrees) into a yawrate
+                                    # Positive yaw means turn left (counter-clockwise)
+                                    cam_yawrate = camera_last_yaw * 1.5  # Gain
+                                    cam_yawrate = max(-45.0, min(45.0, cam_yawrate))
+                                    
+                                    # Add slight forward velocity
+                                    cam_vx = 0.2
+                                
                                 cf.commander.send_hover_setpoint(
-                                    AUTONOMOUS_LAPTOP_VX,
-                                    AUTONOMOUS_LAPTOP_VY,
-                                    AUTONOMOUS_LAPTOP_YAWRATE,
+                                    cam_vx,
+                                    0.0,
+                                    -cam_yawrate,  # hover_setpoint expects negative for CCW in some configs, matching C firmware
                                     TARGET_HEIGHT,
                                 )
                                 log_to_csv()
