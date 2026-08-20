@@ -106,24 +106,27 @@ HEIGHT_SENSOR_MIN_CHANGE = (
 #   1. Subscribe to uartcam.* logs from the firmware (requires UART_CAM_ENABLED
 #      defined at build time on the drone side).
 #   2. Display camera status (active, last yaw, last collision prob, packets).
-#   3. When "Autonomous" mode is toggled ON, switch the laptop's role from
-#      "primary pilot" to "altitude keeper only" — it sends
-#      send_hover_setpoint(0, 0, 0, TARGET_HEIGHT) at 10 Hz so the drone holds
-#      altitude, while the XIAO's UART packets (priority EXTRX=2, higher than
-#      CRTP=1) drive vx/vy/yawrate via the firmware's commander multiplexer.
-#   4. When toggled OFF, the laptop resumes full position-hold control.
+#   3. DISABLE the firmware's camera setpoint pushing (uartcam.enabled=0) on
+#      connect — the firmware's module pushes zero-thrust setpoints at priority
+#      2 that override Python's hover commands and starve the motors.
+#   4. When "Autonomous" mode is toggled ON, Python reads camera data from
+#      uartcam.* log variables and sends COMPLETE hover setpoints (vx/yawrate
+#      from camera, altitude held) at CRTP priority 1. Python is the sole
+#      commander.
+#   5. When toggled OFF, the laptop resumes full position-hold control.
 # Requires the modified LiteWing firmware (see XIAO_CAMERA_ENABLE.md).
 ENABLE_XIAO_CAMERA_INTEGRATION = True
 # Camera packet staleness threshold — if no packet for this many seconds,
 # the script logs a warning and auto-disables autonomous mode (laptop
 # takes back full control). Should be > firmware's 500ms watchdog.
 XIAO_CAMERA_STALE_TIMEOUT = 1.5
-# When autonomous mode is active, the laptop sends these velocities
-# (zero) so the XIAO's UART setpoints (priority 2) cleanly override
-# CRTP setpoints (priority 1) for horizontal motion.
-AUTONOMOUS_LAPTOP_VX = 0.0
-AUTONOMOUS_LAPTOP_VY = 0.0
-AUTONOMOUS_LAPTOP_YAWRATE = 0.0
+# Autonomous mode navigation gains (Python-driven, NOT firmware-driven).
+# When autonomous_mode_active is True, Python reads uartcam.* log data and
+# sends complete hover setpoints. The firmware's setpoint pushing is disabled
+# (uartcam.enabled=0) to prevent zero-thrust priority-2 overrides.
+AUTONOMOUS_FORWARD_VX = 0.2   # Forward velocity when path is clear (m/s)
+AUTONOMOUS_YAW_GAIN = 1.5     # Camera yaw (deg) → yawrate (deg/s) gain
+AUTONOMOUS_YAW_CLAMP = 45.0   # Max yawrate (deg/s)
 
 # === DEAD RECKONING POSITION CONTROL PARAMETERS ===
 # PID Controller Parameters
@@ -174,8 +177,8 @@ SETTLING_CORRECTION_FACTOR = (
 
 # === FIRMWARE PARAMETERS (Z-AXIS) ===
 # Set to True to send these values to the drone on connection
-ENABLE_FIRMWARE_PARAMS = False
-FW_THRUST_BASE = 24000  # Default: 24000. Increase if drone feels heavy (e.g., 26000)
+ENABLE_FIRMWARE_PARAMS = True
+FW_THRUST_BASE = 30000  # Increased for Xiao camera payload (Default: 24000)
 FW_Z_POS_KP = 1.6        # Default: 1.6. Height position gain
 FW_Z_VEL_KP = 15.0       # Default: 22.0. Vertical velocity damping (stop bouncing)
 
@@ -242,8 +245,9 @@ camera_packets_rx = 0            # uartcam.packetsRx (cumulative)
 camera_setpoints_pushed = 0      # uartcam.setpointsPushed (cumulative)
 camera_last_packet_time = 0.0    # time.time() at last received uartcam log
 camera_integration_supported = False  # True iff firmware exposed uartcam.* logs
-# When True, the laptop intentionally sends (0,0,0,TARGET_HEIGHT) so the XIAO
-# (priority EXTRX=2) wins the commander mux for horizontal motion.
+camera_logging_ready = False      # True once camera log config is successfully started
+# When True, Python reads uartcam.* log data and sends camera-driven hover
+# setpoints (vx/yawrate from camera, altitude held). Firmware pushing disabled.
 autonomous_mode_active = False
 # Maneuver state
 maneuver_active = False
@@ -547,8 +551,15 @@ def apply_firmware_parameters(cf, logger=None):
     # --- ALWAYS disable firmware-level camera setpoint pushing ---
     try:
         cf.param.set_value('uartcam.enabled', '0')
+        # Verify it actually took effect (read back)
+        time.sleep(0.1)
+        actual = cf.param.get_value('uartcam.enabled')
         if logger:
-            logger("Disabled firmware uartcam setpoint pushing (Python is sole commander)")
+            if actual == '0':
+                logger("Disabled firmware uartcam setpoint pushing — VERIFIED (Python is sole commander)")
+            else:
+                logger(f"WARNING: uartcam.enabled read back as '{actual}' (expected '0')! "
+                       f"Firmware may override Python's hover commands with zero-thrust setpoints.")
     except Exception as e:
         if logger:
             logger(
@@ -805,7 +816,7 @@ def camera_callback(timestamp, data, logconf):
     global camera_active, camera_last_yaw, camera_last_coll
     global camera_last_flags, camera_last_seq, camera_packets_rx
     global camera_setpoints_pushed, camera_last_packet_time
-    global camera_integration_supported
+    global camera_integration_supported, camera_logging_ready
 
     with data_lock:
         camera_active = bool(data.get("uartcam.active", 0))
@@ -817,6 +828,7 @@ def camera_callback(timestamp, data, logconf):
         camera_setpoints_pushed = int(data.get("uartcam.setpointsPushed", 0))
         camera_last_packet_time = time.time()
         camera_integration_supported = True
+        camera_logging_ready = True
 
 
 def is_camera_packet_stale():
@@ -971,11 +983,13 @@ def setup_logging(cf, logger=None):
                     cf.log.add_config(log_camera)
                     if log_camera.valid:
                         log_camera.start()
+                        camera_logging_ready = True
                         if logger:
                             logger(f"XIAO camera integration: {len(added_camera_vars)} log vars subscribed")
                         else:
                             log_message(f"XIAO camera integration: {len(added_camera_vars)} log vars subscribed")
                     else:
+                        camera_logging_ready = False
                         if logger:
                             logger("XIAO camera log config invalid — camera integration disabled")
                         else:
@@ -3550,11 +3564,13 @@ class DeadReckoningGUI:
             self.flight_thread.daemon = True
             self.flight_thread.start()
 
-            # Enable autonomous button if camera integration is supported
-            # (will be re-checked at toggle time, in case the camera log vars
-            # arrive slightly after the flight thread starts).
+            # Enable autonomous button only if camera integration is enabled in the script.
+            # The toggle itself will still validate that camera logs and packets are available
+            # before switching to autonomous mode.
             if ENABLE_XIAO_CAMERA_INTEGRATION:
                 self.autonomous_button.config(state=tk.NORMAL)
+            else:
+                self.autonomous_button.config(state=tk.DISABLED)
 
             # Log to output window
             self.log_to_output("Flight started")
@@ -3609,8 +3625,8 @@ class DeadReckoningGUI:
     def toggle_autonomous_mode(self):
         """Toggle XIAO-camera-driven autonomous mode.
 
-        When ON: laptop sends altitude-only hover setpoints; XIAO's UART
-        packets (priority EXTRX=2) drive vx/vy/yawrate.
+        When ON: Python reads uartcam.* log data and sends complete hover
+        setpoints (vx/yawrate from camera, altitude held by Python).
         When OFF: laptop resumes full position-hold control.
 
         Safety: refuses to enable if camera integration is not supported
@@ -3621,33 +3637,54 @@ class DeadReckoningGUI:
 
         if not ENABLE_XIAO_CAMERA_INTEGRATION:
             self.log_to_output("Autonomous mode: disabled in script config (ENABLE_XIAO_CAMERA_INTEGRATION=False)")
+            self.status_var.set("Status: Autonomous disabled in config")
             return
 
         if not self.flight_running:
-            self.log_to_output("Autonomous mode: start a flight first")
+            self.log_to_output("Autonomous mode: start a flight first (click 'Start Flight')")
+            self.status_var.set("Status: Start a flight first to use Autonomous")
             return
 
         if not camera_integration_supported:
             self.log_to_output(
-                "Autonomous mode: firmware does not expose uartcam.* logs. "
-                "Flash firmware with UART_CAM_ENABLED defined."
+                "Autonomous mode: BLOCKED — firmware does not expose uartcam.* logs.\n"
+                "  → Check: was firmware compiled with UART_CAM_ENABLED?\n"
+                "  → Check: is the XIAO connected and powered?\n"
+                "  → Check: output log for 'XIAO camera integration: N log vars subscribed'"
             )
+            self.status_var.set("Status: Autonomous BLOCKED — no uartcam.* logs from firmware")
             return
 
         if not autonomous_mode_active:
             # Enabling
             if is_camera_packet_stale():
+                stale_secs = time.time() - camera_last_packet_time if camera_last_packet_time > 0 else 0
                 self.log_to_output(
-                    "Autonomous mode: refused — no camera packet received yet "
-                    f"(stale > {XIAO_CAMERA_STALE_TIMEOUT}s). Verify XIAO is powered "
-                    "and sending UART packets."
+                    f"Autonomous mode: BLOCKED — camera data is stale "
+                    f"(last packet {stale_secs:.1f}s ago, timeout={XIAO_CAMERA_STALE_TIMEOUT}s).\n"
+                    f"  → camera_packets_rx={camera_packets_rx}, camera_active={camera_active}\n"
+                    f"  → Verify XIAO is powered and sending UART packets.\n"
+                    f"  → Check camera status bar for packet count."
                 )
+                self.status_var.set("Status: Autonomous BLOCKED — camera data stale")
+                return
+            if not camera_active:
+                self.log_to_output(
+                    f"Autonomous mode: BLOCKED — uartcam.active=0 in firmware log.\n"
+                    f"  → This means the firmware hasn't received 3+ "
+                    f"consecutive valid packets with model_valid flag set.\n"
+                    f"  → camera_packets_rx={camera_packets_rx}, flags=0x{camera_last_flags:02X}\n"
+                    f"  → Check XIAO serial output for inference errors."
+                )
+                self.status_var.set("Status: Autonomous BLOCKED — uartcam.active=0")
                 return
             autonomous_mode_active = True
             self.autonomous_button.config(text="Stop Autonomous", bg="red")
             self.log_to_output(
                 "AUTONOMOUS MODE ON — Python reads uartcam.* logs and sends "
-                "complete hover setpoints (vx/yawrate from camera, altitude held)."
+                "complete hover setpoints (vx/yawrate from camera, altitude held).\n"
+                f"  → camera_yaw={camera_last_yaw:.1f}°, coll={camera_last_coll:.2f}, "
+                f"pkts={camera_packets_rx}"
             )
             self.status_var.set("Status: AUTONOMOUS (camera-driven)")
         else:
@@ -3764,7 +3801,7 @@ class DeadReckoningGUI:
                     if not DEBUG_MODE:
                         # Enable control corrections during takeoff if height is sufficient (> 5cm)
                         # This prevents drift during the 1.5s takeoff phase
-                        if use_position_hold and sensor_data_ready and current_height > 0.04:
+                        if use_position_hold and sensor_data_ready and current_height > 0.08:
                             # Hold at origin (0,0) during takeoff regardless of maneuver target
                             motion_vx, motion_vy = calculate_position_hold_corrections(0.0, 0.0)
                         else:
@@ -3966,26 +4003,25 @@ class DeadReckoningGUI:
                                 autonomous_mode_active = False
                                 # Fall through to normal position-hold below
                             else:
-                                # Camera is fresh and active: compute steering from log data.
+                                # Camera is fresh and active: Python reads camera data
+                                # from uartcam.* logs and sends COMPLETE hover setpoints
+                                # (vx/yawrate from camera, altitude held by Python).
                                 flight_phase = "AUTONOMOUS"
-                                
-                                # Safety: if collision probability > 0.5 or flag is set
+
                                 if is_camera_collision_warning():
+                                    # Collision detected: stop and hover in place
                                     cam_vx = 0.0
                                     cam_yawrate = 0.0
                                 else:
-                                    # Translate camera yaw (degrees) into a yawrate
-                                    # Positive yaw means turn left (counter-clockwise)
-                                    cam_yawrate = camera_last_yaw * 1.5  # Gain
-                                    cam_yawrate = max(-45.0, min(45.0, cam_yawrate))
-                                    
-                                    # Add slight forward velocity
-                                    cam_vx = 0.2
-                                
+                                    # Clear path: steer from camera yaw + move forward
+                                    cam_yawrate = camera_last_yaw * AUTONOMOUS_YAW_GAIN
+                                    cam_yawrate = max(-AUTONOMOUS_YAW_CLAMP, min(AUTONOMOUS_YAW_CLAMP, cam_yawrate))
+                                    cam_vx = AUTONOMOUS_FORWARD_VX
+
                                 cf.commander.send_hover_setpoint(
                                     cam_vx,
                                     0.0,
-                                    -cam_yawrate,  # hover_setpoint expects negative for CCW in some configs, matching C firmware
+                                    -cam_yawrate,  # hover convention: negate for CCW
                                     TARGET_HEIGHT,
                                 )
                                 log_to_csv()
