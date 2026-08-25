@@ -229,8 +229,10 @@ key_release_points = []  # Store (x, y) tuples of release points
 start_time = None
 neo_controller = None
 data_lock = threading.Lock()  # Protect shared data structures
+# Debug counter for motion callback
+debug_counter = 0
 
-# Global variables for motors and stabilizer
+# === TELEMETRY GLOBALS (motor PWM + controller commands) ===
 motor_m1 = 0
 motor_m2 = 0
 motor_m3 = 0
@@ -239,9 +241,9 @@ stab_roll = 0.0
 stab_pitch = 0.0
 stab_yaw = 0.0
 stab_thrust = 0
-
-# Debug counter for motion callback
-debug_counter = 0
+# Telemetry log configs (kept separate from motion/battery)
+_log_motors = None
+_log_controller = None
 
 # Global logger function - can be set to GUI's log_to_output method
 global_logger = None
@@ -698,6 +700,17 @@ def motion_callback(timestamp, data, logconf):
     raw_velocity_x = calculate_velocity(motion_delta_x, current_height)
     raw_velocity_y = calculate_velocity(motion_delta_y, current_height)
 
+    # Debug output every 100 callbacks (reduce console spam)
+    # debug_counter += 1
+    # if debug_counter % 100 == 0 and (
+    #     abs(motion_delta_x) > 0 or abs(motion_delta_y) > 0
+    # ):
+    #     print(
+    #         f"Sensor Debug - Height: {current_height:.3f}m, "
+    #         f"Raw Motion: X={motion_delta_x}, Y={motion_delta_y}, "
+    #         f"Velocities: X={raw_velocity_x:.4f}, Y={raw_velocity_y:.4f}"
+    #     )
+
     # Apply smoothing
     current_vx = smooth_velocity(raw_velocity_x, velocity_x_history)
     current_vy = smooth_velocity(raw_velocity_y, velocity_y_history)
@@ -713,24 +726,6 @@ def motion_callback(timestamp, data, logconf):
     update_history()
 
 
-def motor_log_callback(timestamp, data, logconf):
-    """Motor PWM data callback - separate block to stay under 26-byte limit"""
-    global motor_m1, motor_m2, motor_m3, motor_m4
-    motor_m1 = data.get("pwm.m1_pwm", 0)
-    motor_m2 = data.get("pwm.m2_pwm", 0)
-    motor_m3 = data.get("pwm.m3_pwm", 0)
-    motor_m4 = data.get("pwm.m4_pwm", 0)
-
-
-def controller_log_callback(timestamp, data, logconf):
-    """Controller command data callback - separate block to stay under 26-byte limit"""
-    global stab_roll, stab_pitch, stab_yaw, stab_thrust
-    stab_roll = data.get("controller.cmd_roll", 0.0)
-    stab_pitch = data.get("controller.cmd_pitch", 0.0)
-    stab_yaw = data.get("controller.cmd_yaw", 0.0)
-    stab_thrust = 0
-
-
 def battery_callback(timestamp, data, logconf):
     """Battery voltage data callback"""
     global current_battery_voltage, battery_data_ready
@@ -740,126 +735,129 @@ def battery_callback(timestamp, data, logconf):
 
 
 def setup_logging(cf, logger=None):
-    """Setup motion sensor, motor, controller, and battery voltage logging.
-    Uses separate LogConfig blocks to stay under the Crazyflie 26-byte-per-block limit.
-    Block 1 (Motion):     deltaX(2) + deltaY(2) + z(4) + zrange(2) = 10 bytes
-    Block 2 (Motors):     m1(4) + m2(4) + m3(4) + m4(4)            = 16 bytes
-    Block 3 (Controller): cmd_roll(4) + cmd_pitch(4) + cmd_yaw(4)  = 12 bytes
-    Block 4 (Battery):    vbat(4)                                  = 4  bytes
-    """
-    _log = logger or log_message
-
+    """Setup motion sensor and battery voltage logging"""
     log_motion = LogConfig(name="Motion", period_in_ms=SENSOR_PERIOD_MS)
-    log_motors = LogConfig(name="Motors", period_in_ms=SENSOR_PERIOD_MS)
-    log_controller = LogConfig(name="Controller", period_in_ms=SENSOR_PERIOD_MS)
-    log_battery = LogConfig(name="Battery", period_in_ms=500)
+    log_battery = LogConfig(
+        name="Battery", period_in_ms=500
+    )  # Check battery every 500ms
 
     try:
         toc = cf.log.toc.toc
-
-        def _add_vars(logconf, variables, label):
-            """Helper to add variables to a LogConfig, returns list of added vars."""
-            added = []
-            for var_name, var_type in variables:
-                group, name = var_name.split(".")
-                if group in toc and name in toc[group]:
-                    try:
-                        logconf.add_variable(var_name, var_type)
-                        added.append(var_name)
-                    except Exception as e:
-                        _log(f"Failed to add {label} variable {var_name}: {e}")
-                else:
-                    _log(f"{label} variable not found in TOC: {var_name}")
-            return added
-
-        # Block 1: Motion sensors (10 bytes)
+        # Setup motion logging
         motion_variables = [
             ("motion.deltaX", "int16_t"),
             ("motion.deltaY", "int16_t"),
             ("stateEstimate.z", "float"),
             ("range.zrange", "uint16_t"),
         ]
-        added_motion = _add_vars(log_motion, motion_variables, "Motion")
+        added_motion_vars = []
+        for var_name, var_type in motion_variables:
+            group, name = var_name.split(".")
+            if group in toc and name in toc[group]:
+                try:
+                    log_motion.add_variable(var_name, var_type)
+                    added_motion_vars.append(var_name)
+                except Exception as e:
+                    if logger:
+                        logger(f"Failed to add motion variable {var_name}: {e}")
+                    else:
+                        # Use global logger to redirect to output window
+                        log_message(f"Failed to add motion variable {var_name}: {e}")
+            else:
+                if logger:
+                    logger(f"Motion variable not found: {var_name}")
+                else:
+                    # Use global logger to redirect to output window
+                    log_message(f"Motion variable not found: {var_name}")
 
-        if len(added_motion) < 2:
-            _log("ERROR: Not enough motion variables found!")
+        if len(added_motion_vars) < 2:
+            if logger:
+                logger("ERROR: Not enough motion variables found!")
+            else:
+                # Use global logger to redirect to output window
+                log_message("ERROR: Not enough motion variables found!")
             return None, None
 
-        # Block 2: Motor PWM values (16 bytes)
-        motor_variables = [
-            ("pwm.m1_pwm", "uint32_t"),
-            ("pwm.m2_pwm", "uint32_t"),
-            ("pwm.m3_pwm", "uint32_t"),
-            ("pwm.m4_pwm", "uint32_t"),
-        ]
-        added_motors = _add_vars(log_motors, motor_variables, "Motor")
-
-        # Block 3: Controller commands (12 bytes)
-        controller_variables = [
-            ("controller.cmd_roll", "float"),
-            ("controller.cmd_pitch", "float"),
-            ("controller.cmd_yaw", "float"),
-        ]
-        added_controller = _add_vars(log_controller, controller_variables, "Controller")
-
-        # Block 4: Battery (4 bytes)
+        # Setup battery logging
         battery_variables = [("pm.vbat", "float")]
-        added_battery = _add_vars(log_battery, battery_variables, "Battery")
-        if added_battery:
-            _log(f"Added battery variable: {added_battery[0]}")
+        added_battery_vars = []
+        for var_name, var_type in battery_variables:
+            group, name = var_name.split(".")
+            if group in toc and name in toc[group]:
+                try:
+                    log_battery.add_variable(var_name, var_type)
+                    added_battery_vars.append(var_name)
+                    if logger:
+                        logger(f"Added battery variable: {var_name}")
+                    else:
+                        # Use global logger to redirect to output window
+                        log_message(f"Added battery variable: {var_name}")
+                except Exception as e:
+                    if logger:
+                        logger(f"Failed to add battery variable {var_name}: {e}")
+                    else:
+                        # Use global logger to redirect to output window
+                        log_message(f"Failed to add battery variable {var_name}: {e}")
+            else:
+                if logger:
+                    logger(f"Battery variable not found: {var_name}")
+                else:
+                    # Use global logger to redirect to output window
+                    log_message(f"Battery variable not found: {var_name}")
 
         # Setup callbacks
         log_motion.data_received_cb.add_callback(motion_callback)
-        if added_motors:
-            log_motors.data_received_cb.add_callback(motor_log_callback)
-        if added_controller:
-            log_controller.data_received_cb.add_callback(controller_log_callback)
-        if added_battery:
+        if len(added_battery_vars) > 0:
             log_battery.data_received_cb.add_callback(battery_callback)
 
-        # Add and validate configurations
+        # Add configurations
         cf.log.add_config(log_motion)
-        if added_motors:
-            cf.log.add_config(log_motors)
-        if added_controller:
-            cf.log.add_config(log_controller)
-        if added_battery:
+        if len(added_battery_vars) > 0:
             cf.log.add_config(log_battery)
 
         time.sleep(0.5)
 
+        # Validate configurations
         if not log_motion.valid:
-            _log("ERROR: Motion log configuration invalid!")
+            if logger:
+                logger("ERROR: Motion log configuration invalid!")
+            else:
+                # Use global logger to redirect to output window
+                log_message("ERROR: Motion log configuration invalid!")
             return None, None
-        if added_motors and not log_motors.valid:
-            _log("WARNING: Motors log configuration invalid - continuing without motor logging")
-        if added_controller and not log_controller.valid:
-            _log("WARNING: Controller log configuration invalid - continuing without controller logging")
-        if added_battery and not log_battery.valid:
-            _log("WARNING: Battery log configuration invalid!")
+        if len(added_battery_vars) > 0 and not log_battery.valid:
+            if logger:
+                logger("WARNING: Battery log configuration invalid!")
+            else:
+                # Use global logger to redirect to output window
+                log_message("WARNING: Battery log configuration invalid!")
+            # Continue without battery logging
             log_battery = None
 
         # Start logging
         log_motion.start()
-        if added_motors and log_motors.valid:
-            log_motors.start()
-        if added_controller and log_controller.valid:
-            log_controller.start()
         if log_battery:
             log_battery.start()
 
         time.sleep(0.5)
-        _log(
-            f"Logging started - Motion: {len(added_motion)} vars, "
-            f"Motors: {len(added_motors)} vars, "
-            f"Controller: {len(added_controller)} vars, "
-            f"Battery: {len(added_battery)} vars"
-        )
+        if logger:
+            logger(
+                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars"
+            )
+        else:
+            # Use global logger to redirect to output window
+            log_message(
+                f"Logging started - Motion: {len(added_motion_vars)} vars, Battery: {len(added_battery_vars)} vars"
+            )
         return log_motion, log_battery
 
     except Exception as e:
         error_msg = f"Logging setup failed: {str(e)}"
-        _log(error_msg)
+        if logger:
+            logger(error_msg)
+        else:
+            # Use global logger to redirect to output window
+            log_message(error_msg)
         raise Exception(error_msg)
 
 
@@ -884,8 +882,8 @@ def init_csv_logging(logger=None):
             "Velocity Y (m/s)",
             "Correction VX",
             "Correction VY",
-            "motor_m1", "motor_m2", "motor_m3", "motor_m4",
-            "stab_roll", "stab_pitch", "stab_yaw", "stab_thrust",
+            "Motor_M1_PWM", "Motor_M2_PWM", "Motor_M3_PWM", "Motor_M4_PWM",
+            "Cmd_Roll", "Cmd_Pitch", "Cmd_Yaw",
         ]
     )
     if logger:
@@ -913,7 +911,7 @@ def log_to_csv():
             f"{current_correction_vx:.6f}",
             f"{current_correction_vy:.6f}",
             str(motor_m1), str(motor_m2), str(motor_m3), str(motor_m4),
-            f"{stab_roll:.4f}", f"{stab_pitch:.4f}", f"{stab_yaw:.4f}", str(stab_thrust),
+            f"{stab_roll:.4f}", f"{stab_pitch:.4f}", f"{stab_yaw:.4f}",
         ]
     )
 
@@ -929,6 +927,97 @@ def close_csv_logging(logger=None):
         else:
             # Use global logger to redirect to output window
             log_message("CSV log closed.")
+
+
+def _motor_callback(timestamp, data, logconf):
+    """Motor PWM data callback (separate log block)"""
+    global motor_m1, motor_m2, motor_m3, motor_m4
+    motor_m1 = data.get("pwm.m1_pwm", 0)
+    motor_m2 = data.get("pwm.m2_pwm", 0)
+    motor_m3 = data.get("pwm.m3_pwm", 0)
+    motor_m4 = data.get("pwm.m4_pwm", 0)
+
+
+def _controller_callback(timestamp, data, logconf):
+    """Controller command data callback (separate log block)"""
+    global stab_roll, stab_pitch, stab_yaw
+    stab_roll = data.get("controller.cmd_roll", 0.0)
+    stab_pitch = data.get("controller.cmd_pitch", 0.0)
+    stab_yaw = data.get("controller.cmd_yaw", 0.0)
+
+
+def setup_telemetry_logging(cf, logger=None):
+    """Setup SEPARATE motor + controller log blocks.
+    These are independent from the Motion block so they cannot break it.
+    If they fail, the rest of the script keeps working.
+    """
+    global _log_motors, _log_controller
+    _log = logger or log_message
+
+    try:
+        toc = cf.log.toc.toc
+
+        # Motor block (4 x uint32_t = 16 bytes, under 26-byte limit)
+        _log_motors = LogConfig(name="Motors", period_in_ms=SENSOR_PERIOD_MS)
+        motor_vars = [("pwm.m1_pwm", "uint32_t"), ("pwm.m2_pwm", "uint32_t"),
+                      ("pwm.m3_pwm", "uint32_t"), ("pwm.m4_pwm", "uint32_t")]
+        motor_count = 0
+        for var_name, var_type in motor_vars:
+            group, name = var_name.split(".")
+            if group in toc and name in toc[group]:
+                _log_motors.add_variable(var_name, var_type)
+                motor_count += 1
+
+        if motor_count > 0:
+            _log_motors.data_received_cb.add_callback(_motor_callback)
+            cf.log.add_config(_log_motors)
+            _log_motors.start()
+            _log(f"Telemetry: Motors block started ({motor_count} vars)")
+        else:
+            _log("Telemetry: No motor variables found in TOC, skipping")
+            _log_motors = None
+
+        # Controller block (3 x float = 12 bytes, under 26-byte limit)
+        _log_controller = LogConfig(name="Controller", period_in_ms=SENSOR_PERIOD_MS)
+        ctrl_vars = [("controller.cmd_roll", "float"), ("controller.cmd_pitch", "float"),
+                     ("controller.cmd_yaw", "float")]
+        ctrl_count = 0
+        for var_name, var_type in ctrl_vars:
+            group, name = var_name.split(".")
+            if group in toc and name in toc[group]:
+                _log_controller.add_variable(var_name, var_type)
+                ctrl_count += 1
+
+        if ctrl_count > 0:
+            _log_controller.data_received_cb.add_callback(_controller_callback)
+            cf.log.add_config(_log_controller)
+            _log_controller.start()
+            _log(f"Telemetry: Controller block started ({ctrl_count} vars)")
+        else:
+            _log("Telemetry: No controller variables found in TOC, skipping")
+            _log_controller = None
+
+    except Exception as e:
+        _log(f"Telemetry logging setup failed (non-fatal): {e}")
+        _log_motors = None
+        _log_controller = None
+
+
+def stop_telemetry_logging():
+    """Stop the motor + controller log blocks."""
+    global _log_motors, _log_controller
+    if _log_motors:
+        try:
+            _log_motors.stop()
+        except:
+            pass
+        _log_motors = None
+    if _log_controller:
+        try:
+            _log_controller.stop()
+        except:
+            pass
+        _log_controller = None
 
 
 class DeadReckoningGUI:
@@ -3194,6 +3283,8 @@ class DeadReckoningGUI:
                 # Setup logging (same as flight)
                 log_motion, log_battery = setup_logging(cf)
                 use_position_hold = log_motion is not None
+                # Setup motor + controller telemetry (separate blocks)
+                setup_telemetry_logging(cf)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -3250,6 +3341,7 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
+            stop_telemetry_logging()
             # Disable NeoPixel controls when sensor test stops
             # Disable NeoPixel controls when sensor test stops
             try:
@@ -3408,6 +3500,8 @@ class DeadReckoningGUI:
                 flight_phase = "SETUP"
                 log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
+                # Setup motor + controller telemetry (separate blocks)
+                setup_telemetry_logging(cf, logger=self.log_to_output)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -3691,6 +3785,7 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
+            stop_telemetry_logging()
             flight_active = False
             self.flight_running = False
             self.update_button(
@@ -3855,6 +3950,8 @@ class DeadReckoningGUI:
                 # Setup logging
                 log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
+                # Setup motor + controller telemetry (separate blocks)
+                setup_telemetry_logging(cf, logger=self.log_to_output)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -4133,6 +4230,7 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
+            stop_telemetry_logging()
             flight_active = False
             maneuver_active = False
             self.joystick_active = False
