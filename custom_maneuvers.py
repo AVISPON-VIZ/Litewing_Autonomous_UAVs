@@ -694,14 +694,14 @@ def motion_callback(timestamp, data, logconf):
     current_range_height = raw_range_mm / 1000.0 if raw_range_mm else 0.0
     motion_delta_x = data.get("motion.deltaX", 0)
     motion_delta_y = data.get("motion.deltaY", 0)
-    motor_m1 = data.get("motor.m1", 0)
-    motor_m2 = data.get("motor.m2", 0)
-    motor_m3 = data.get("motor.m3", 0)
-    motor_m4 = data.get("motor.m4", 0)
-    stab_roll = data.get("stabilizer.roll", 0.0)
-    stab_pitch = data.get("stabilizer.pitch", 0.0)
-    stab_yaw = data.get("stabilizer.yaw", 0.0)
-    stab_thrust = data.get("stabilizer.thrust", 0)
+    motor_m1 = data.get("pwm.m1_pwm", 0)
+    motor_m2 = data.get("pwm.m2_pwm", 0)
+    motor_m3 = data.get("pwm.m3_pwm", 0)
+    motor_m4 = data.get("pwm.m4_pwm", 0)
+    stab_roll = data.get("controller.cmd_roll", 0.0)
+    stab_pitch = data.get("controller.cmd_pitch", 0.0)
+    stab_yaw = data.get("controller.cmd_yaw", 0.0)
+    stab_thrust = 0  # not available in controller group directly
     sensor_data_ready = True
 
     # Calculate velocities
@@ -757,14 +757,13 @@ def setup_logging(cf, logger=None):
             ("motion.deltaY", "int16_t"),
             ("stateEstimate.z", "float"),
             ("range.zrange", "uint16_t"),
-            ("motor.m1", "uint32_t"),
-            ("motor.m2", "uint32_t"),
-            ("motor.m3", "uint32_t"),
-            ("motor.m4", "uint32_t"),
-            ("stabilizer.roll", "float"),
-            ("stabilizer.pitch", "float"),
-            ("stabilizer.yaw", "float"),
-            ("stabilizer.thrust", "uint32_t"),
+            ("pwm.m1_pwm", "uint32_t"),
+            ("pwm.m2_pwm", "uint32_t"),
+            ("pwm.m3_pwm", "uint32_t"),
+            ("pwm.m4_pwm", "uint32_t"),
+            ("controller.cmd_roll", "float"),
+            ("controller.cmd_pitch", "float"),
+            ("controller.cmd_yaw", "float"),
         ]
         added_motion_vars = []
         for var_name, var_type in motion_variables:
