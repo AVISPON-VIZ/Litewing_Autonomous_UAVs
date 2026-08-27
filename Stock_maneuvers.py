@@ -76,13 +76,13 @@ TAKEOFF_TIME = 1.0  # Time to takeoff and stabilize (reduced for steeper ramp)
 HOVER_DURATION = 20.0  # How long to hover with position hold
 LANDING_TIME = 0.5  # Time to land
 # Debug mode - set to True to disable motors (sensors and logging still work)
-DEBUG_MODE = True
+DEBUG_MODE = False
 # Height sensor safety check - set to False to disable emergency stop during takeoff/stabilized
 ENABLE_HEIGHT_SENSOR_SAFETY = False 
 # Filtering strength for velocity smoothing (0.0 = no smoothing, 1.0 = max smoothing)
 VELOCITY_SMOOTHING_ALPHA = 0.85  # Default: 0.7 (previously hardcoded)
 # CSV Logging - set to False to disable CSV file generation
-DRONE_CSV_LOGGING = True
+DRONE_CSV_LOGGING = False
 # Takeoff Ramp - set to False to disable smooth altitude climb (direct target height)
 ENABLE_TAKEOFF_RAMP = False
 
@@ -231,19 +231,6 @@ neo_controller = None
 data_lock = threading.Lock()  # Protect shared data structures
 # Debug counter for motion callback
 debug_counter = 0
-
-# === TELEMETRY GLOBALS (motor PWM + controller commands) ===
-motor_m1 = 0
-motor_m2 = 0
-motor_m3 = 0
-motor_m4 = 0
-stab_roll = 0.0
-stab_pitch = 0.0
-stab_yaw = 0.0
-stab_thrust = 0
-# Telemetry log configs (kept separate from motion/battery)
-_log_motors = None
-_log_controller = None
 
 # Global logger function - can be set to GUI's log_to_output method
 global_logger = None
@@ -882,8 +869,6 @@ def init_csv_logging(logger=None):
             "Velocity Y (m/s)",
             "Correction VX",
             "Correction VY",
-            "Motor_M1_PWM", "Motor_M2_PWM", "Motor_M3_PWM", "Motor_M4_PWM",
-            "Cmd_Roll", "Cmd_Pitch", "Cmd_Yaw",
         ]
     )
     if logger:
@@ -910,8 +895,6 @@ def log_to_csv():
             f"{current_vy:.6f}",
             f"{current_correction_vx:.6f}",
             f"{current_correction_vy:.6f}",
-            str(motor_m1), str(motor_m2), str(motor_m3), str(motor_m4),
-            f"{stab_roll:.4f}", f"{stab_pitch:.4f}", f"{stab_yaw:.4f}",
         ]
     )
 
@@ -927,97 +910,6 @@ def close_csv_logging(logger=None):
         else:
             # Use global logger to redirect to output window
             log_message("CSV log closed.")
-
-
-def _motor_callback(timestamp, data, logconf):
-    """Motor PWM data callback (separate log block)"""
-    global motor_m1, motor_m2, motor_m3, motor_m4
-    motor_m1 = data.get("pwm.m1_pwm", 0)
-    motor_m2 = data.get("pwm.m2_pwm", 0)
-    motor_m3 = data.get("pwm.m3_pwm", 0)
-    motor_m4 = data.get("pwm.m4_pwm", 0)
-
-
-def _controller_callback(timestamp, data, logconf):
-    """Controller command data callback (separate log block)"""
-    global stab_roll, stab_pitch, stab_yaw
-    stab_roll = data.get("controller.cmd_roll", 0.0)
-    stab_pitch = data.get("controller.cmd_pitch", 0.0)
-    stab_yaw = data.get("controller.cmd_yaw", 0.0)
-
-
-def setup_telemetry_logging(cf, logger=None):
-    """Setup SEPARATE motor + controller log blocks.
-    These are independent from the Motion block so they cannot break it.
-    If they fail, the rest of the script keeps working.
-    """
-    global _log_motors, _log_controller
-    _log = logger or log_message
-
-    try:
-        toc = cf.log.toc.toc
-
-        # Motor block (4 x uint32_t = 16 bytes, under 26-byte limit)
-        _log_motors = LogConfig(name="Motors", period_in_ms=SENSOR_PERIOD_MS)
-        motor_vars = [("pwm.m1_pwm", "uint32_t"), ("pwm.m2_pwm", "uint32_t"),
-                      ("pwm.m3_pwm", "uint32_t"), ("pwm.m4_pwm", "uint32_t")]
-        motor_count = 0
-        for var_name, var_type in motor_vars:
-            group, name = var_name.split(".")
-            if group in toc and name in toc[group]:
-                _log_motors.add_variable(var_name, var_type)
-                motor_count += 1
-
-        if motor_count > 0:
-            _log_motors.data_received_cb.add_callback(_motor_callback)
-            cf.log.add_config(_log_motors)
-            _log_motors.start()
-            _log(f"Telemetry: Motors block started ({motor_count} vars)")
-        else:
-            _log("Telemetry: No motor variables found in TOC, skipping")
-            _log_motors = None
-
-        # Controller block (3 x float = 12 bytes, under 26-byte limit)
-        _log_controller = LogConfig(name="Controller", period_in_ms=SENSOR_PERIOD_MS)
-        ctrl_vars = [("controller.cmd_roll", "float"), ("controller.cmd_pitch", "float"),
-                     ("controller.cmd_yaw", "float")]
-        ctrl_count = 0
-        for var_name, var_type in ctrl_vars:
-            group, name = var_name.split(".")
-            if group in toc and name in toc[group]:
-                _log_controller.add_variable(var_name, var_type)
-                ctrl_count += 1
-
-        if ctrl_count > 0:
-            _log_controller.data_received_cb.add_callback(_controller_callback)
-            cf.log.add_config(_log_controller)
-            _log_controller.start()
-            _log(f"Telemetry: Controller block started ({ctrl_count} vars)")
-        else:
-            _log("Telemetry: No controller variables found in TOC, skipping")
-            _log_controller = None
-
-    except Exception as e:
-        _log(f"Telemetry logging setup failed (non-fatal): {e}")
-        _log_motors = None
-        _log_controller = None
-
-
-def stop_telemetry_logging():
-    """Stop the motor + controller log blocks."""
-    global _log_motors, _log_controller
-    if _log_motors:
-        try:
-            _log_motors.stop()
-        except:
-            pass
-        _log_motors = None
-    if _log_controller:
-        try:
-            _log_controller.stop()
-        except:
-            pass
-        _log_controller = None
 
 
 class DeadReckoningGUI:
@@ -3283,8 +3175,6 @@ class DeadReckoningGUI:
                 # Setup logging (same as flight)
                 log_motion, log_battery = setup_logging(cf)
                 use_position_hold = log_motion is not None
-                # Setup motor + controller telemetry (separate blocks)
-                setup_telemetry_logging(cf)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -3341,7 +3231,6 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
-            stop_telemetry_logging()
             # Disable NeoPixel controls when sensor test stops
             # Disable NeoPixel controls when sensor test stops
             try:
@@ -3500,8 +3389,6 @@ class DeadReckoningGUI:
                 flight_phase = "SETUP"
                 log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
-                # Setup motor + controller telemetry (separate blocks)
-                setup_telemetry_logging(cf, logger=self.log_to_output)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -3785,7 +3672,6 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
-            stop_telemetry_logging()
             flight_active = False
             self.flight_running = False
             self.update_button(
@@ -3950,8 +3836,6 @@ class DeadReckoningGUI:
                 # Setup logging
                 log_motion, log_battery = setup_logging(cf, logger=self.log_to_output)
                 use_position_hold = log_motion is not None
-                # Setup motor + controller telemetry (separate blocks)
-                setup_telemetry_logging(cf, logger=self.log_to_output)
                 if use_position_hold:
                     time.sleep(1.0)
 
@@ -4230,7 +4114,6 @@ class DeadReckoningGUI:
                     log_battery.stop()
                 except:
                     pass
-            stop_telemetry_logging()
             flight_active = False
             maneuver_active = False
             self.joystick_active = False
